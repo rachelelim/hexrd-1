@@ -1,8 +1,7 @@
 import importlib.resources
 import numpy as np
 from hexrd import constants
-from hexrd import symmetry, symbols
-from hexrd.spacegroup import Allowed_HKLs
+from hexrd.material import spacegroup, symbols, symmetry
 from hexrd.ipfcolor import sphere_sector, colorspace
 from hexrd.valunits import valWUnit
 import hexrd.resources
@@ -1033,7 +1032,7 @@ class unitcell:
                             for ik in np.arange(kmax, kmin, -1)
                             for il in np.arange(lmax, lmin, -1)])
 
-        hkl_allowed = Allowed_HKLs(self.sgnum, hkllist)
+        hkl_allowed = spacegroup.Allowed_HKLs(self.sgnum, hkllist)
 
         hkl = []
         dsp = []
@@ -1105,7 +1104,7 @@ class unitcell:
             for j in range(i):
                 C[i, j] = C[j, i]
 
-        self.stifness = C
+        self.stiffness = C
         self.compliance = np.linalg.inv(C)
 
     def inside_spheretriangle(self, conn, dir3, hemisphere, switch):
@@ -1386,8 +1385,6 @@ class unitcell:
         rgb = self.color_directions(dir3, laueswitch)
         return rgb
 
-        self.stiffness = C
-
     def is_editable(self, lp_name):
         """
         @author Saransh Singh, Lawrence Livermore National Lab
@@ -1660,6 +1657,14 @@ class unitcell:
                                                   self._supergroup_laue)
         self.CalcDensity()
         self.calc_absorption_length()
+
+    @property
+    def pgnum(self):
+        return constants.SYM_PG_to_PGNUM[self.point_group]
+
+    @property
+    def point_group(self):
+        return self._pointGroup
 
     @property
     def atom_pos(self):

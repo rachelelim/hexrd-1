@@ -1,6 +1,6 @@
-""" Adapter class for raw image reader
-"""
-import warnings
+""" Adapter class for raw image reader"""
+import os
+import threading
 
 import numpy as np
 import yaml
@@ -10,16 +10,17 @@ from ..imageseriesiter import ImageSeriesIterator
 
 
 class RawImageSeriesAdapter(ImageSeriesAdapter):
-    """collection of images in HDF5 format"""
+    """Image Data in Custom Format
+
+    Parameters
+    ----------
+    fname: string or Path
+       name of input YAML file describing the format
+    """
 
     format = 'raw-image'
 
     def __init__(self, fname, **kwargs):
-        """Image data in custom format
-
-        *fname* - filename of the data file
-        *kwargs* - keyword arguments (none required)
-        """
         self.fname = fname
         with open(fname, "r") as f:
             y = yaml.safe_load(f)
@@ -27,14 +28,16 @@ class RawImageSeriesAdapter(ImageSeriesAdapter):
         self.fname = y['filename']
         self.dtype = self._get_dtype(y['scalar'])
         self._shape = tuple((int(si) for si in y['shape'].split()))
-        self.framesize = self._shape[0]*self._shape[1]
+        self._frame_size = self._shape[0] * self._shape[1]
+        self._frame_bytes = self._frame_size * self.dtype.itemsize
+        self._frame_read_lock = threading.Lock()
         self.skipbytes = y['skip']
         self._len = self._get_length()
         self._meta = dict()
         self.kwargs = kwargs
 
-        # Prepare to read
-        self.iframe = -1
+        # Open file for reading.
+        self.f = open(self.fname, "r")
 
     def _get_dtype(self, scalar):
         numtype = scalar['type']
@@ -51,28 +54,33 @@ class RawImageSeriesAdapter(ImageSeriesAdapter):
 
     def _get_length(self):
         """Read file and determine length"""
-        iframe = 0
-        with open(self.fname, "r") as f:
-            _ = np.fromfile(f, np.byte, count=self.skipbytes)
-            # now keep reading frames until EOF
-            moreframes = True
-            while moreframes:
-                _ = np.fromfile(f, self.dtype, count=self.framesize)
-                if len(_) == self.framesize:
-                    iframe += 1
-                else:
-                    moreframes = False
+        nbytes = os.path.getsize(self.fname)
+        if nbytes % self._frame_bytes == self.skipbytes:
+            nframes = (nbytes - self.skipbytes) // self._frame_bytes
+        else:
+            msg = (
+                f"Total number of bytes ({nbytes}) does not work with "
+                f"skipbytes ({self.skipbytes}) and "
+                f"_frame_size ({self._frame_size}). Check the skipbytes value."
+            )
+            raise ValueError(msg)
 
-        return iframe
+        return nframes
 
     @staticmethod
     def typechars(numtype, bytes_=4, signed=False, little=True):
         """Return byte-type for data type and endianness
 
-        numtype (str) - "i", "f", "d", "b"  for int, float, double or bool
-        bytes - number of bytes: 1,2,4, or 8 for ints only
-        signed (bool) - true for signed ints, false for unsigned
-        little (bool) - true for little endian
+        Parameters
+        ----------
+        numtype:  str {"i", "f", "d", "b"}
+            scalar type for int, float, double or bool
+        bytes: int
+            number of bytes: 1,2,4, or 8 (for ints only)
+        signed: bool
+            True for signed ints, False for unsigned
+        little: bool
+            True for little endian
         """
         intbytes = {
             1: "b",
@@ -103,21 +111,12 @@ class RawImageSeriesAdapter(ImageSeriesAdapter):
         return ImageSeriesIterator(self)
 
     def __getitem__(self, key):
-        if self.iframe < 0:
-            self.f = open(self.fname, "r")
-            _ = np.fromfile(self.f, np.byte, count=self.skipbytes)
-            self.iframe = 0
-        if key == 0:
-            self.f.seek(0, 0)
-            self.iframe = 0
-        if key != self.iframe:
-            msg = "frame %d not available, series must be read in sequence!"
-            raise ValueError(msg % key)
-        frame = np.fromfile(self.f, self.dtype, count=self.framesize)
-        self.iframe += 1
-        if self.iframe == len(self):
-            self.iframe = -1
-            self.f.close()
+        count = key * self._frame_bytes + self.skipbytes
+
+        # Ensure reading a frame the file is thread-safe
+        with self._frame_read_lock:
+            self.f.seek(count, 0)
+            frame = np.fromfile(self.f, self.dtype, count=self._frame_size)
 
         return frame.reshape(self.shape)
 

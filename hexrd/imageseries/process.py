@@ -8,7 +8,18 @@ from .baseclass import ImageSeries
 
 
 class ProcessedImageSeries(ImageSeries):
-    """Images series with mapping applied to frames"""
+    """imsageseries based on existing one with image processing options
+
+    Parameters
+    ----------
+    imser: ImageSeries
+       an existing imageseries
+    oplist: list
+       list of processing operations; each option is a (key, data) pair,
+       with key specifying the operation to perform using specified data
+    frame_list: list of ints or None, default = None
+       specify subset of frames by list; if None, then all frames are used
+    """
     FLIP = 'flip'
     DARK = 'dark'
     RECT = 'rectangle'
@@ -16,22 +27,14 @@ class ProcessedImageSeries(ImageSeries):
     GAUSS_LAPLACE = 'gauss_laplace'
 
     def __init__(self, imser, oplist, **kwargs):
-        """imsageseries based on existing one with image processing options
 
-        *imser* - an existing imageseries
-        *oplist* - list of processing operations;
-                   a list of pairs (key, data) pairs, with key specifying the
-                   operation to perform using specified data
-
-        *keyword args*
-        'frame_list' - specify subset of frames by list
-
-        """
         self._imser = imser
         self._meta = copy.deepcopy(imser.metadata)
         self._oplist = oplist
         self._frames = kwargs.pop('frame_list', None)
         self._hasframelist = (self._frames is not None)
+        if self._hasframelist:
+            self._update_omega()
         self._opdict = {}
 
         self.addop(self.DARK, self._subtract_dark)
@@ -109,6 +112,11 @@ class ProcessedImageSeries(ImageSeries):
     def _gauss_laplace(self, img, sigma):
         return scipy.ndimage.gaussian_laplace(img, sigma)
 
+    def _update_omega(self):
+        """Update omega if there is a framelist"""
+        if "omega" in self.metadata:
+            omega = self.metadata["omega"]
+            self.metadata["omega"] = omega[self._frames]
     #
     # ==================== API
     #

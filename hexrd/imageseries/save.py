@@ -24,10 +24,16 @@ MAX_NZ_FRACTION = 0.1    # 10% sparsity trigger for frame-cache write
 def write(ims, fname, fmt, **kwargs):
     """write imageseries to file with options
 
-    *ims* - an imageseries
-    *fname* - name of file or an h5py file for writing HDF5
-    *fmt* - a format string
-    *kwargs* - options specific to format
+    Parameters
+    ----------
+    ims: Imageseries
+       the imageseries to write
+    fname: str
+       the name of the HDF5 file to write
+    fmt: str
+       format name of the imageseries
+    kwargs: dict
+       options specific to format
     """
     wcls = _Registry.getwriter(fmt)
     w = wcls(ims, fname, **kwargs)
@@ -61,7 +67,17 @@ class _Registry(object):
 
 
 class Writer(object, metaclass=_RegisterWriter):
-    """Base class for writers"""
+    """Base class for writers
+
+    Parameters
+    ----------
+    ims: Imageseries
+       the imageseries to write
+    fname: str
+       the name of the HDF5 file to write
+    kwargs: dict
+       options specific to format
+    """
     fmt = None
 
     def __init__(self, ims, fname, **kwargs):
@@ -85,25 +101,42 @@ class Writer(object, metaclass=_RegisterWriter):
         self._fname_base = tmp[0]
         self._fname_suff = tmp[1]
 
-    pass  # end class
+    @property
+    def fname(self):
+        return self._fname
 
+    @property
+    def fname_dir(self):
+        return self._fname_dir
+
+    @property
+    def opts(self):
+        return self._opts
 
 class WriteH5(Writer):
+    """Write imageseries in HDF5 file
+
+    Parameters
+    ----------
+    ims: Imageseries
+       the imageseries to write
+    fname: str
+       the name of the HDF5 file to write
+    path: str, required
+       the path in HDF5 file
+    gzip: int 0-9
+       0 turns off compression, default=1
+    chunk_rows: int
+       number of rows per chunk; default is all
+    shuffle: bool
+       shuffle HDF5 data
+    """
     fmt = 'hdf5'
     dflt_gzip = 1
     dflt_chrows = 0
     dflt_shuffle = True
 
     def __init__(self, ims, fname, **kwargs):
-        """Write imageseries in HDF5 file
-
-           Required Args:
-           path - the path in HDF5 file
-
-           Options:
-           gzip - 0-9; 0 turns off compression; 4 is default
-           chunk_rows - number of rows per chunk; default is all
-           """
         Writer.__init__(self, ims, fname, **kwargs)
         self._path = self._opts['path']
 
@@ -164,27 +197,57 @@ class WriteH5(Writer):
 
 
 class WriteFrameCache(Writer):
-    """info from yml file"""
+    """write frame cache imageseries
+
+    The default write option is to save image data and metadata all
+    in a single npz file. The original option was to have a YAML file
+    as the primary file and a specified cache file for the images; this
+    method is deprecated.
+
+    Parameters
+    ----------
+    ims: Imageseries instance
+       the imageseries to write
+    fname: str or Path
+       name of file to write;
+    threshold: float
+       threshold value for image, at or below which values are zeroed
+    cache_file: str or Path, optional
+       name of the npz file to save the image data, if not given in the
+       `fname` argument; for YAML format (deprecated), this is required
+    max_workers: int, optional
+       The max number of worker threads for multithreading. Defaults to
+       the number of CPUs.
+    """
     fmt = 'frame-cache'
 
     def __init__(self, ims, fname, **kwargs):
-        """write yml file with frame cache info
-
-        kwargs has keys:
-
-        cache_file - name of array cache file
-        meta - metadata dictionary
-        """
         Writer.__init__(self, ims, fname, **kwargs)
         self._thresh = self._opts['threshold']
-        cf = kwargs['cache_file']
-        if os.path.isabs(cf):
-            self._cache = cf
+        self._cache, self.cachename = self._set_cache()
+
+        ncpus = multiprocessing.cpu_count()
+        self.max_workers = kwargs.get('max_workers', ncpus)
+
+    def _set_cache(self):
+
+        cf = self.opts.get('cache_file')
+
+        if cf is None:
+            cachename = cache = self.fname
         else:
-            cdir = os.path.dirname(fname)
-            self._cache = os.path.join(cdir, cf)
-        self._cachename = cf
-        self.max_workers = kwargs.get('max_workers', None)
+            if os.path.isabs(cf):
+                cache = cf
+            else:
+                cdir = os.path.dirname(self.fname)
+                cache = os.path.join(cdir, cf)
+            cachename = cf
+
+        return cache, cachename
+
+    @property
+    def cache(self):
+        return self._cache
 
     def _process_meta(self, save_omegas=False):
         d = {}
@@ -212,16 +275,14 @@ class WriteFrameCache(Writer):
                  'nframes': len(self._ims), 'shape': list(self._ims.shape)}
         info = {'data': datad, 'meta': self._process_meta(save_omegas=True)}
         with open(self._fname, "w") as f:
-            yaml.dump(info, f)
+            yaml.safe_dump(info, f)
 
     def _write_frames(self):
         """also save shape array as originally done (before yaml)"""
         buff_size = self._ims.shape[0]*self._ims.shape[1]
         arrd = {}
 
-        ncpus = multiprocessing.cpu_count()
-        max_workers = ncpus if self.max_workers is None else self.max_workers
-        num_workers = min(max_workers, len(self._ims))
+        num_workers = min(self.max_workers, len(self._ims))
 
         row_buffers = np.empty((num_workers, buff_size), dtype=np.uint16)
         col_buffers = np.empty((num_workers, buff_size), dtype=np.uint16)
@@ -238,9 +299,6 @@ class WriteFrameCache(Writer):
             rows = row_buffers[buffer_id]
             cols = col_buffers[buffer_id]
             vals = val_buffers[buffer_id]
-
-            # FIXME: in __init__() of ProcessedImageSeries:
-            # 'ProcessedImageSeries' object has no attribute '_adapter'
 
             # wrapper to find (sparse) pixels above threshold
             count = extract_ijv(self._ims[i], self._thresh,
@@ -267,13 +325,15 @@ class WriteFrameCache(Writer):
             'initializer': assign_buffer_id,
         }
         with ThreadPoolExecutor(**kwargs) as executor:
-            executor.map(extract_data, range(len(self._ims)))
+            # Evaluate the results via `list()`, so that if an exception is
+            # raised in a thread, it will be re-raised and visible to the user.
+            list(executor.map(extract_data, range(len(self._ims))))
 
         arrd['shape'] = self._ims.shape
         arrd['nframes'] = len(self._ims)
         arrd['dtype'] = str(self._ims.dtype).encode()
         arrd.update(self._process_meta())
-        np.savez_compressed(self._cache, **arrd)
+        np.savez_compressed(self.cache, **arrd)
 
     def write(self, output_yaml=False):
         """writes frame cache for imageseries
@@ -282,4 +342,8 @@ class WriteFrameCache(Writer):
         """
         self._write_frames()
         if output_yaml:
+            warnings.warn(
+                "YAML output for frame-cache is deprecated",
+                DeprecationWarning
+            )
             self._write_yml()
