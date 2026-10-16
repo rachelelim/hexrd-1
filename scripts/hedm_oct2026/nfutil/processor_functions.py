@@ -203,6 +203,45 @@ def _quant_and_clip_confidence(coords, angles, image,
     return 0 if in_sensor == 0 else float(matches)/float(in_sensor)
 
 
+# Search radii (degrees) used when refining an orientation at a voxel
+REFINEMENT_RADII_DEG = [5.0, 4., 3.5, 3., 2.5, 2., 1.5, 1.0, 0.5, 0.25, 0.1]
+
+
+def _pattern_search_refine(start_exp_map, cost, radii_deg, max_recenters=100):
+    """Coarse-to-fine pattern search for the orientation with the highest cost.
+
+    At each radius (in degrees) a 3x3x3 grid of exp-map offsets (-r, 0, +r on
+    each axis) is evaluated around the current best orientation. The grid is
+    then re-centered on the best point and evaluated again, as long as that
+    strictly improves the cost (at most ``max_recenters`` times), before moving
+    to the next, smaller radius. A pass that does not improve on the previous
+    one is discarded.
+
+    ``cost`` takes an (n, 3) array of exp-maps and returns n confidences.
+    Returns ``exp_map, confidence`` of the best orientation found.
+    """
+    exp_map = np.asarray(start_exp_map, dtype=float)
+    confidence = 0.0
+    for mis in radii_deg:
+        mis_amt = np.radians(mis)
+        # Create a linup of the orientations to go on either side
+        ori_pts = np.array([-mis_amt, 0., mis_amt])
+        XsO, YsO, ZsO = np.meshgrid(ori_pts, ori_pts, ori_pts)  # Make that 3D
+        grid0 = np.vstack(
+            [XsO.flatten(), YsO.flatten(), ZsO.flatten()]).T  # Re-arange
+        for counter in range(max_recenters):
+            all_confidence = cost(grid0 + exp_map)
+            # Grab just the first instance if there is a tie
+            idx = np.argmax(all_confidence)
+            # The first pass at each radius is always taken. Later passes
+            # (re-centering) are only taken while they strictly improve.
+            if counter > 0 and all_confidence[idx] <= confidence:
+                break
+            exp_map = grid0[idx] + exp_map
+            confidence = all_confidence[idx]
+    return exp_map, confidence
+
+
 def _test_single_orientation_at_single_coordinate(experiment, image_stack, coord_to_test, orientation_data_to_test, refine_yes_no=0):
     """
         Goal:
@@ -269,80 +308,44 @@ def _test_single_orientation_at_single_coordinate(experiment, image_stack, coord
         # Assume grain is unstrained
         ref_gparams = np.array([0., 0., 0., 1., 1., 1., 0., 0., 0.])
 
-        for mis in [5.0, 4., 3.5, 3., 2.5, 2., 1.5, 1.0, 0.5, 0.25, 0.1]:
-            # Define misorientation grid
-            # np.radians(0.05) #experiment.misorientation_bound_rad # This is the amount of misorientation allowed on one side of the original orientation
-            mis_amt = np.radians(mis)
-            # experiment.misorientation_step_rad # This is the spacing between orientations
-            spacing = mis_amt
-            counter = 0
-            confidence = 0.00
-            old_conf = 0.001
-            while old_conf >= confidence and counter < 100:
-                if confidence != 0:
-                    old_conf = confidence
+        def cost(trial_exp_maps):
+            # Confidence of each trial orientation at the coordinate point
+            confidences = np.zeros(trial_exp_maps.shape[0])
+            for i, exp_map in enumerate(trial_exp_maps):
+                # Transform exp_map to rotation matrix
+                rMat_c = xfcapi.make_rmat_of_expmap(exp_map)
+                # Define all parameters for the orientation (strain and orientation)
+                gparams = np.hstack([exp_map, ref_gparams])
+                # Simulate the the diffraction events
+                sim_results = xrdutil.simulateGVecs(plane_data, detector_params, gparams, panel_dims=panel_dims_expanded,
+                                                    pixel_pitch=pixel_size, ome_range=ome_range, ome_period=ome_period,
+                                                    distortion=None)
+                # Pull just the angles for each g-vector
+                angles = sim_results[2]
+                # Calculate the sample rotation matrix
+                rMat_ss = xfcapi.make_sample_rmat(
+                    experiment.chi, angles[:, 2])
+                # Convert the angles to g-vectors
+                gvec_cs = xfcapi.angles_to_gvec(
+                    angles, chi=experiment.chi, rmat_c=rMat_c)
+                # Find where those g-vectors intercept the detector from our coordinate point
+                det_xy = xfcapi.gvec_to_xy(
+                    gvec_cs, rD, rMat_ss, rMat_c, tD, tS, coord_to_test)
+                # Check xy detector positions and omega value to see if intensity exisits
+                confidences[i] = _quant_and_clip_confidence(det_xy, angles[:, 2], image_stack,
+                                                            base, inv_deltas, clip_vals, bsp, ome_edges)
+            return confidences
 
-                # Create a linup of the orientations to go on either side
-                ori_pts = np.arange(-mis_amt,
-                                    (mis_amt+(spacing*0.999)), spacing)
-                XsO, YsO, ZsO = np.meshgrid(
-                    ori_pts, ori_pts, ori_pts)  # Make that 3D
-                grid0 = np.vstack(
-                    [XsO.flatten(), YsO.flatten(), ZsO.flatten()]).T  # Re-arange
+        exp_map, confidence = _pattern_search_refine(
+            original_exp_map, cost, REFINEMENT_RADII_DEG)
 
-                # Add misorientation to the trial exp_map
-                # Define all sub orientations around the single orientation
-                all_exp_maps = grid0 + np.r_[original_exp_map]
-
-                # Initialize an array to hold the confidence values
-                n_oris = ori_pts.shape[0]**3
-                all_confidence = np.zeros(n_oris)
-
-                # Check each orientation for its confidence at the coordinate point
-                for i in np.arange(n_oris):
-                    # Grab orientation information
-                    exp_map = all_exp_maps[i, :]
-                    # Transform exp_map to rotation matrix
-                    rMat_c = xfcapi.make_rmat_of_expmap(exp_map)
-                    # Define all parameters for the orientation (strain and orientation)
-                    gparams = np.hstack([exp_map, ref_gparams])
-                    # Simulate the the diffraction events
-                    sim_results = xrdutil.simulateGVecs(plane_data, detector_params, gparams, panel_dims=panel_dims_expanded,
-                                                        pixel_pitch=pixel_size, ome_range=ome_range, ome_period=ome_period,
-                                                        distortion=None)
-                    # Pull just the angles for each g-vector
-                    angles = sim_results[2]
-                    # Calculate the sample rotation matrix
-                    rMat_ss = xfcapi.make_sample_rmat(
-                        experiment.chi, angles[:, 2])
-                    # Convert the angles to g-vectors
-                    gvec_cs = xfcapi.angles_to_gvec(
-                        angles, chi=experiment.chi, rmat_c=rMat_c)
-                    # Find where those g-vectors intercept the detector from our coordinate point
-                    det_xy = xfcapi.gvec_to_xy(
-                        gvec_cs, rD, rMat_ss, rMat_c, tD, tS, coord_to_test)
-                    # Check xy detector positions and omega value to see if intensity exisits
-                    all_confidence[i] = _quant_and_clip_confidence(det_xy, angles[:, 2], image_stack,
-                                                                   base, inv_deltas, clip_vals, bsp, ome_edges)
-
-                # Find the index of the max confidence
-                idx = np.where(all_confidence == np.max(all_confidence))[
-                    0][0]  # Grab just the first instance if there is a tie
-
-                # What is the hightest confidence orientation and what is its confidence
-                exp_map = all_exp_maps[idx, :]
-                original_exp_map = exp_map
-                confidence = all_confidence[idx]
-
-                counter += 1
-
-            # What is the misorientation, in degrees between this exp_map and the original?
-            original_quats = np.atleast_2d(
-                rotations.quatOfExpMap(very_original_exp_map))
-            refined_quats = np.atleast_2d(rotations.quatOfExpMap(exp_map))
-            [misorientation, a] = rotations.misorientation(
-                original_quats.T, refined_quats.T)  # In radians
-            misorientation = np.degrees(misorientation)
+        # What is the misorientation, in degrees between this exp_map and the original?
+        original_quats = np.atleast_2d(
+            rotations.quatOfExpMap(very_original_exp_map))
+        refined_quats = np.atleast_2d(rotations.quatOfExpMap(exp_map))
+        [misorientation, a] = rotations.misorientation(
+            original_quats.T, refined_quats.T)  # In radians
+        misorientation = np.degrees(misorientation)
 
     # Ensure output is the correct size
     if len(np.shape(exp_map)) == 1:
@@ -808,15 +811,9 @@ def test_orientations_at_coordinates(experiment, controller, image_stack, orient
     t0 = timeit.default_timer()
     # Shoot a warning to the user if they are running with refinment
     if refine_yes_no == 1:
-        # This is the amount of misorientation allowed on one side of the original orientation
-        mis_amt = 0.5  # experiment.misorientation_bound_rad
-        # This is the spacing between orientations
-        spacing = 0.25  # experiment.misorientation_step_rad
-        # Create a linup of the orientations to go on either side
-        ori_pts = np.arange(-mis_amt, (mis_amt+(spacing*0.999)), spacing)
-        n_oris_refine = ori_pts.shape[0]**3
         print(
-            f'You will be refining with {n_oris_refine} orientations centered around the centroid orientation.')
+            f'Refining each orientation with a coarse-to-fine search over radii {REFINEMENT_RADII_DEG} degrees '
+            '(27 trial orientations per pass, re-centered on the best while the confidence improves).')
 
     # What senario do we have?
     if ncpus == 1 or (n_oris == 1 and n_coords == 1):
