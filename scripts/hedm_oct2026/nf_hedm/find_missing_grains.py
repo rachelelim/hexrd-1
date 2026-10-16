@@ -39,7 +39,8 @@ def load_configuration(config_path: str) -> Any:
 
 def setup_experiment(configuration: Any) -> Tuple[Any, np.ndarray, Any]:
     """Generate experiment, image stack, and controller from configuration."""
-    experiment, image_stack = nfutil.generate_experiment(configuration)
+    experiment = nfutil.Experiment(configuration)
+    image_stack = experiment.image_stack
     controller = nfutil.build_controller(configuration)
     return experiment, image_stack, controller
 
@@ -133,13 +134,7 @@ def rerun_and_save_reconstruction(experiment: Any, controller: Any, image_stack:
     experiment.exp_maps = all_exp_maps
     experiment.n_grains = all_exp_maps.shape[0]
 
-    Xs, Ys, Zs, mask, test_coordinates = nfutil.generate_test_coordinates(
-        experiment.vertical_bounds, experiment.voxel_spacing,
-        experiment.x_center, experiment.z_center,
-        experiment.x_length, experiment.z_length,
-        mask_data_file=experiment.mask_filepath,
-        vertical_motor_position=experiment.vertical_motor_position
-    )
+    Xs, Ys, Zs, mask, test_coordinates = experiment.generate_test_coordinates()
     precomputed_orientation_data = nfutil.precompute_diffraction_data(
         experiment, controller, experiment.exp_maps
     )

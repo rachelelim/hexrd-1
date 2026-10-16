@@ -102,7 +102,8 @@ configuration_filepath = 'nf_config_S0_L0.yml'
 # Go ahead and load the configuration
 configuration = nf_config.open_file(configuration_filepath)[0]
 # Generate the experiment
-experiment, image_stack = nfutil.generate_experiment(configuration)
+experiment = nfutil.Experiment(configuration)
+image_stack = experiment.image_stack
 # Generate the controller
 controller = nfutil.build_controller(configuration)
 
