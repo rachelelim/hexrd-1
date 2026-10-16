@@ -6,6 +6,7 @@ from .NF_reconstruction import NF_ReconstructionConfig
 from .NF_images import NF_ImagesConfig
 from .experiment import ExperimentConfig
 from .input_files import InputConfig
+from .stitch import StitchConfig
 from .tomography import TomographyConfig
 
 
@@ -35,6 +36,10 @@ class NFRootConfig(Config):
     @property
     def tomography(self):
         return TomographyConfig(self)
+
+    @property
+    def stitch(self):
+        return StitchConfig(self)
 
     @property
     def reconstruction(self):
