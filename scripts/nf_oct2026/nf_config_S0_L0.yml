@@ -1,0 +1,126 @@
+analysis_name: brass_S0_L0
+
+main_directory: "./"
+output_directory: "./"
+
+input_files:
+  detector_file: "nf_detector_retiga_e7.yml"
+  materials_file: "../../materials.h5"
+  #grains_out_file: './brass_S0_L0_grains.out'
+  # grains_out_file: "./brass_S0_L0_real_grains.out"
+  grains_out_file: /usr/workspace/lim37/ER-disloc/voisin-4783-b/brass-ht-s1-1/NF/NF_merged_grains.out
+
+output_plot_check: False
+
+experiment:
+  beam_energy: 65.351 # keV
+  beam_vertical_span: [-0.135, 0.135] # mm
+
+  material_name: brass
+  max_tth: None
+
+  comp_thresh: 0.5
+  chi2_thresh: 0.5
+
+  images_and_omegas:
+    omega_start: 0.0 # Degrees
+    omega_stop: 360. # Degrees
+    omega_correction: -0.08 # Degrees (float) to shift images postive or negative through omega
+
+  misorientation:
+    use_misorientation: False
+    bound: 0.25 # Degrees
+    spacing: 0.25 # Degrees (will not be used if bound = 0.0)
+
+NF_images:
+  sample_raw_data_folder: "/p/lustre2/lim37/voisin-4783-b/brass-ht-s1-1"
+
+  image_loading:
+    style: h5 # par, direct, or h5
+    # A metadata file (.par and .json) will be looked for by default
+    # If none is found images will be loaded directly
+    # Metadata Paramters
+    json_and_par_starter: "id3a-rams2_nf*"
+    target_vertical_position: -0.875
+    vertical_motor_name: "ramsz"
+
+    # Load single h5 file from folder XX/nf/default_000000.h5
+    data_folders: [33, 34, 35, 36]
+    omega_starts: [0, 90, 180, 270]
+    omega_stops: [90, 180, 270, 360]
+
+    nframes_per_folder: 360
+
+    # Only used when style: direct
+    # stem: "nf_" # Image filename prefix
+    # stem_digits: 6 # Zero-padded digits in the image number
+    # img_start: 0
+    # goodstarts: [0, 0, 0, 0] # First good image number in each data folder
+
+  # Image cleaning routine
+  processing:
+    # Dynamic darkfield generation
+    omega_kernel_size: 50 # Frames - 10 degs worth of frames is a good place to start
+
+    # Global image threshold
+    threshold: 0 # Applied as uint in addition to darkfield
+
+    # Which routine to use - Only the parameters for chosen routine will be pulled
+    routine_choice: 0 # 0 = gaussian blurring, 1 = dilation/errosion, 2 = non-local means
+
+    # Gaussian Cleaning Parameters
+    sigma: 1.5 # Larger values begin to rapidly blur images
+    gaussian_binarization_threshold: 1. # Images are floats when this is applied
+
+    # Erosion/Dilation Parameters
+    num_errosions: 2 # General practice, num_errosions >= num_dilations
+    num_dilations: 3
+    erosion_dilation_binarization_threshold: 6 # Images are uints when this is applied
+
+    # Non-Local Means Parameters
+    patch_size: 3
+    patch_distance: 5
+    NLM_binarization_threshold: 10 # Images are floats when this is applied
+
+    # Small object removal
+    small_object_size: 200 # Number of pixels or None to remove nothing
+
+    # Omega dilation
+    dilate_omega: 1 # 0 or 1 - Dilate the binarized image stack in omega
+
+NF_reconstruction:
+  tomography:
+    mask_filepath: /usr/workspace/lim37/ER-disloc/voisin-4783-b/brass-ht-s1-1/tomo/brass_all_5um_tomo_mask_small.npz
+    use_single_layer: False
+    vertical_motor_position: -0.875 #-0.3
+
+  cross_sectional_dimensions: 1.45 # mm
+  voxel_spacing: 0.005 # mm - cubic voxel size for reconstruction
+  x_center: 0.
+  z_center: 0.
+  x_length: 1.3
+  z_length: 1.3
+  desired_vertical_span: [-0.125, 0.125] #[-0.075, 0.075] #mm - span of vertical space to reconstruct
+
+  beam_stop:
+    beam_stop_filepath: #'/nfs/chess/aux/reduced_data/cycles/' # Path or leave blank to generate beam_stop with parameters
+    # Below parameters will only be used if beam_stop_filepath: None
+    beam_stop_vertical_center: -1.2375 # mm - Measured from the origin of the detector paramters
+    beam_stop_vertical_span: 1.2 # mm - Total span of the beam stop vertically
+
+  missing_grains:
+    reconstructed_data_path: "/usr/workspace/lim37/ER-disloc/voisin-4783-b/brass-ht-s1-1/NF/brass_S0_L0_grain_map_data.npz"
+    ori_grid_spacing: 1.0
+    confidence_threshold: 0.7 # Anything less than this will be looked at for new grains
+    low_confidence_sparsing: 1 # 0 will take all voxels, 1 will take about half, 2 about a quarter - uses a sparse regular grid
+    errode_free_surface: 1 # NF is poor at the surface already, removes the free surface of your tomo mask from the search space
+    coord_cutoff_scale: 0.05
+    iter_cutoff: 20
+    re_run_and_save: 0
+
+multiprocessing:
+  num_cpus: -1 # Number of threads to use [all = os.cpu_count(), half = os.cpu_count()/2 (default), negative number = os.cpu_count()-num, positive number = num]
+  chunk_size: -1 # Use -1 if you wish automatic chunk size calculation
+  check: None
+  limit: None
+  generate: None

@@ -1,0 +1,58 @@
+analysis_name: diamond-1a_S0_L1b # The name you want all your output files to have within thier filename (relevant to the sample)
+
+#main_directory: './' # Starting path for detector and materials file, if None this will default to working directory.
+output_directory: "./" # Path to save all output files, if None this will default to main_directory
+
+input_files:
+  detector_file: "../../retiga_e7.yml" # Your detector file, if full path is not provided, will default to looking in main_directory
+# Do you want plots to show?
+output_plot_check: True
+
+experiment:
+  # Incoming beam information
+  beam_energy: 61.332 # keV
+  beam_vertical_span: [-0.35, 0.35] # mm
+
+
+tomography:
+  # If you are running tomography in CHAP then none of this section will be used
+  # Load images and process tomography mask (depreciated version)
+  img_stem: nf_
+  filetype: h5
+  num_digits: 6
+  bright:
+    filename: /p/vast1/trimet/chess_sep26/lind-4275-b/diamond-1a/22/nf/retiga_012546.h5
+  dark:
+    filename: /p/vast1/trimet/chess_sep26/lind-4275-b/diamond-1a/21/nf/retiga_012545.h5
+  tomo_images:
+    filename: /p/vast1/trimet/chess_sep26/lind-4275-b/diamond-1a/23/nf/retiga_012547.h5
+    num_images: 721
+  ome_start: 0.0 #degrees
+  ome_end: 180
+  reconstruction:
+    mask_filepath: diamond-1a_S0_L0_tomo.npz # Absolute path or leave empty to not use a mask
+    project_single_layer: False # True uses the center mask layer for all vertical positions
+    vertical_motor_position: -0 # mm - What is the vertical motor's position?
+    voxel_spacing: 0.01
+    v_bnds: [0., 0.35] #[-0.45, 0.55]
+    x_center: 0
+    z_center: 0
+    x_length: 1.5
+    z_length: 1.5
+    #cross_sectional_dim: 2
+
+    #Don't change these unless you know what you are doing, this will close small holes
+    #and remove noise
+  processing:
+    recon_thresh: 0.0002 #usually varies between 0.0001 and 0.0005
+    noise_obj_size: 300
+    min_hole_size: 500
+    erosion_iter: 2
+    dilation_iter: 2
+
+multiprocessing:
+  num_cpus: 20 # Number of threads to use [all = os.cpu_count(), half = os.cpu_count()/2 (default), negative number = os.cpu_count()-num, positive number = num]
+  chunk_size: -1 # Use -1 if you wish automatic chunk size calculation
+  check: None
+  limit: None
+  generate: None

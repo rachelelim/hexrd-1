@@ -1,0 +1,30 @@
+analysis_name: brass_S0 # Output files are named <analysis_name>_stitched unless stitch:output_stem is set
+
+main_directory: "./" # Starting path for the materials file, if None this will default to working directory
+output_directory: "/usr/workspace/lim37/ER-disloc/voisin-4783-b/brass-ht-s1-1/NF" # Path to save the stitched volume
+
+input_files:
+  materials_file: "../../materials.h5"
+  grains_out_file: "/usr/workspace/lim37/ER-disloc/voisin-4783-b/brass-ht-s1-1/NF/NF_merged_grains.out" # Grains used by all of the layers
+
+experiment:
+  material_name: brass
+  beam_energy: 65.351 # keV
+
+stitch:
+  # Where the layers were saved and how they are named. %d is replaced by the layer number,
+  # the files are <layer_directory>/<layer_stem>_grain_map_data.npz. layer_directory defaults to output_directory
+  layer_directory: "/usr/workspace/lim37/ER-disloc/voisin-4783-b/brass-ht-s1-1/NF"
+  layer_stem: "brass_S0_L%d"
+
+  # One entry per layer, in the order the layers are stacked (L0, L1, ...).
+  # Each is the NF_reconstruction:tomography:vertical_motor_position of that layer's NF config.
+  # The number of layers is the number of entries.
+  layer_motor_positions: [-0.875, -0.625, -0.375, -0.125, 0.125, 0.375, 0.625, 0.875] # mm
+
+  # Tomography mask the layers were reconstructed with, leave empty to not write a mask
+  tomography_mask_filepath: "/usr/workspace/lim37/ER-disloc/voisin-4783-b/brass-ht-s1-1/tomo/brass_all_5um_tomo_mask_small.npz"
+  voxel_spacing: 0.005 # mm - same as the layers
+  overlap: 0.0 # mm of overlap between neighbouring layers
+  confidence_threshold: 0.22 # Voxels below this confidence are set to no grain (0)
+  #output_stem: brass_init_stitched # Defaults to <analysis_name>_stitched
