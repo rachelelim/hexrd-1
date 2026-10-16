@@ -38,8 +38,11 @@ class NF_ReconstructionConfig(Config):
 
     @property
     def desired_vertical_span(self):
-        return self._cfg.get('NF_reconstruction:desired_vertical_span',
-                             self._cfg.get('experiment:beam_vertical_span'))
+        # defaults to the beam vertical span, which is only required if this is not set
+        span = self._cfg.get('NF_reconstruction:desired_vertical_span', None)
+        if span is None:
+            span = self._cfg.get('experiment:beam_vertical_span')
+        return span
 
     @property
     def beam_stop(self):
