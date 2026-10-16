@@ -23,6 +23,22 @@ from scipy.ndimage import median_filter
 
 from .data_io import _load_images
 
+def make_chunks(n_items, ncpus, chunk_size=-1):
+    """Split ``n_items`` into contiguous chunks for the multiprocessing pool.
+
+    If ``chunk_size`` is -1 it is chosen so there is about one chunk per CPU.
+    Returns ``chunks, starts, stops, chunk_size`` where chunk ``i`` covers
+    ``[starts[i], stops[i])`` and the last stop is clipped to ``n_items``.
+    """
+    if chunk_size == -1:
+        chunk_size = int(np.ceil(n_items/ncpus))
+    num_chunks = int(np.ceil(n_items/chunk_size))
+    chunks = np.arange(num_chunks)
+    starts = chunks*chunk_size
+    stops = np.minimum(starts + chunk_size, n_items)
+    return chunks, starts, stops, chunk_size
+
+
 def worker_init(id_state, id_exp):
     """process initialization function. This function is only used when the
     child processes are spawned (instead of forked). When using the fork model
@@ -725,23 +741,13 @@ def precompute_diffraction_data(experiment, controller, exp_maps_to_precompute):
                     experiment, exp_maps_to_precompute)
         elif ncpus > 1:
             # Many orientations, many CPUs
-            # Define the chunk size
-            chunk_size = controller.get_chunk_size()
-            if chunk_size == -1:
-                chunk_size = int(np.ceil(n_oris/ncpus))
+            # Define the chunking
+            chunks, starts, stops, chunk_size = make_chunks(
+                n_oris, ncpus, controller.get_chunk_size())
+            num_chunks = len(chunks)
             # Tell the user what we are doing
             print(
                 f'Precomputing diffraction data for {n_oris} orientations on {ncpus} CPUs.')
-            # Create chunking
-            num_chunks = int(np.ceil(n_oris/chunk_size))
-            chunks = np.arange(num_chunks)
-            starts = np.zeros(num_chunks, dtype=int)
-            stops = np.zeros(num_chunks, dtype=int)
-            for i in np.arange(num_chunks):
-                starts[i] = i*chunk_size
-                stops[i] = i*chunk_size + chunk_size
-                if stops[i] >= n_oris:
-                    stops[i] = n_oris
             # Tell the user about the chunking
             print(
                 f'There are {num_chunks} chunks with {chunk_size} orientations in each chunk.')
@@ -827,20 +833,10 @@ def test_orientations_at_coordinates(experiment, controller, image_stack, orient
             # Tell the user what we are doing
             print(
                 f'Testing {n_oris} orientations at {n_coords} coordinate points on {ncpus} CPUs.')
-            # Define the chunk size
-            chunk_size = controller.get_chunk_size()
-            if chunk_size == -1:
-                chunk_size = int(np.ceil(n_coords/ncpus))
-            # Create chunking
-            num_chunks = int(np.ceil(n_coords/chunk_size))
-            chunks = np.arange(num_chunks)
-            starts = np.zeros(num_chunks, dtype=int)
-            stops = np.zeros(num_chunks, dtype=int)
-            for i in np.arange(num_chunks):
-                starts[i] = i*chunk_size
-                stops[i] = i*chunk_size + chunk_size
-                if stops[i] >= n_coords:
-                    stops[i] = n_coords
+            # Define the chunking
+            chunks, starts, stops, chunk_size = make_chunks(
+                n_coords, ncpus, controller.get_chunk_size())
+            num_chunks = len(chunks)
             # Tell the user about the chunking
             print(f'The {ncpus} CPUs will tackle {num_chunks} chunks with {chunk_size} coordinate points to test against the {n_oris} orientations.')
             # Initialize arrays to drop the exp_map and confidence
@@ -871,20 +867,10 @@ def test_orientations_at_coordinates(experiment, controller, image_stack, orient
             # Tell the user what we are doing
             print(
                 f'Testing {n_oris} orientations at {n_coords} coordinate points on {ncpus} CPUs.')
-            # Define the chunk size
-            chunk_size = controller.get_chunk_size()
-            if chunk_size == -1:
-                chunk_size = int(np.ceil(n_oris/ncpus))
-            # Create chunking
-            num_chunks = int(np.ceil(n_oris/chunk_size))
-            chunks = np.arange(num_chunks)
-            starts = np.zeros(num_chunks, dtype=int)
-            stops = np.zeros(num_chunks, dtype=int)
-            for i in np.arange(num_chunks):
-                starts[i] = i*chunk_size
-                stops[i] = i*chunk_size + chunk_size
-                if stops[i] >= n_oris:
-                    stops[i] = n_oris
+            # Define the chunking
+            chunks, starts, stops, chunk_size = make_chunks(
+                n_oris, ncpus, controller.get_chunk_size())
+            num_chunks = len(chunks)
             # Tell the user about the chunking
             print(f'The {ncpus} CPUs will tackle {num_chunks} chunks with {chunk_size} orientations to test at the {n_coords} coordinate points.')
             # Initialize arrays to drop the exp_map and confidence
@@ -981,20 +967,10 @@ def load_all_images(configuration, filenames, controller):
             # Generate the blank image stack
             raw_image_stack = np.zeros(
                 [n_imgs, image_shape[0], image_shape[1]], image_dtype)
-            # Define the chunk size
-            chunk_size = controller.get_chunk_size()
-            if chunk_size == -1:
-                chunk_size = int(np.ceil(n_imgs/ncpus))
-            # Create chunking
-            num_chunks = int(np.ceil(n_imgs/chunk_size))
-            chunks = np.arange(num_chunks)
-            starts = np.zeros(num_chunks, dtype=int)
-            stops = np.zeros(num_chunks, dtype=int)
-            for i in np.arange(num_chunks):
-                starts[i] = i*chunk_size
-                stops[i] = i*chunk_size + chunk_size
-                if stops[i] >= n_imgs:
-                    stops[i] = n_imgs
+            # Define the chunking
+            chunks, starts, stops, chunk_size = make_chunks(
+                n_imgs, ncpus, controller.get_chunk_size())
+            num_chunks = len(chunks)
             print(
                 f'Loading {n_imgs} images with {ncpus} CPUs and {num_chunks} chunks of size {chunk_size}.')
             # Package all inputs to the distributor function
@@ -1050,20 +1026,10 @@ def remove_median_darkfields(raw_image_stack, controller, configuration):
         # Generate the blank image stack
         cleaned_image_stack = np.zeros(
             np.shape(raw_image_stack), raw_image_stack.dtype)
-        # Define the chunk size
-        chunk_size = controller.get_chunk_size()
-        if chunk_size == -1:
-            chunk_size = int(np.ceil(n_slices/ncpus))
-        # Create chunking
-        num_chunks = int(np.ceil(n_slices/chunk_size))
-        chunks = np.arange(num_chunks)
-        starts = np.zeros(num_chunks, dtype=int)
-        stops = np.zeros(num_chunks, dtype=int)
-        for i in np.arange(num_chunks):
-            starts[i] = i*chunk_size
-            stops[i] = i*chunk_size + chunk_size
-            if stops[i] >= n_slices:
-                stops[i] = n_slices
+        # Define the chunking
+        chunks, starts, stops, chunk_size = make_chunks(
+            n_slices, ncpus, controller.get_chunk_size())
+        num_chunks = len(chunks)
         print(
             f'Subtracting dynamic darkfield from {n_slices} slices with {ncpus} CPUs and {num_chunks} chunks of size {chunk_size}.')
         # Package all inputs to the distributor function
@@ -1139,20 +1105,10 @@ def filter_and_binarize_images(cleaned_image_stack, controller, filter_parameter
     else:
         # Generate the blank image stack
         binarized_image_stack = np.zeros(np.shape(cleaned_image_stack), bool)
-        # Define the chunk size
-        chunk_size = controller.get_chunk_size()
-        if chunk_size == -1:
-            chunk_size = int(np.ceil(n_images/ncpus))
-        # Create chunking
-        num_chunks = int(np.ceil(n_images/chunk_size))
-        chunks = np.arange(num_chunks)
-        starts = np.zeros(num_chunks, dtype=int)
-        stops = np.zeros(num_chunks, dtype=int)
-        for i in np.arange(num_chunks):
-            starts[i] = i*chunk_size
-            stops[i] = i*chunk_size + chunk_size
-            if stops[i] >= n_images:
-                stops[i] = n_images
+        # Define the chunking
+        chunks, starts, stops, chunk_size = make_chunks(
+            n_images, ncpus, controller.get_chunk_size())
+        num_chunks = len(chunks)
         print(f'Cleaning {n_images} images with {cleanup_text[filter_parameters[2]]} and {small_objects_text[filter_parameters[0]]}\n\
               with {ncpus} CPUs and {num_chunks} chunks of size {chunk_size}')
         # Package all inputs to the distributor function
@@ -1180,39 +1136,31 @@ def filter_and_binarize_images(cleaned_image_stack, controller, filter_parameter
     return binarized_image_stack
 
 
-def _precompute_diffraction_data_distributor(chunk):
-    # Where are we pulling data from within the lists?
+def _run_chunk(func, chunk):
+    # _mp_state = (starts, stops, *args for func), set by multiprocessing_pool
     starts = _mp_state[0]
     stops = _mp_state[1]
-    return _precompute_diffraction_data_of_many_orientations(*_mp_state[2:], start=starts[chunk], stop=stops[chunk])
+    return func(*_mp_state[2:], start=starts[chunk], stop=stops[chunk])
+
+
+def _precompute_diffraction_data_distributor(chunk):
+    return _run_chunk(_precompute_diffraction_data_of_many_orientations, chunk)
 
 
 def _test_many_orientations_at_many_coordinates_distributor(chunk):
-    # Where are we pulling data from within the lists?
-    starts = _mp_state[0]
-    stops = _mp_state[1]
-    return _test_many_orientations_at_many_coordinates(*_mp_state[2:], start=starts[chunk], stop=stops[chunk])
+    return _run_chunk(_test_many_orientations_at_many_coordinates, chunk)
 
 
 def _load_images_distributor(chunk):
-    # Where are we pulling data from within the lists?
-    starts = _mp_state[0]
-    stops = _mp_state[1]
-    return _load_images(*_mp_state[2:], start=starts[chunk], stop=stops[chunk])
+    return _run_chunk(_load_images, chunk)
 
 
 def _remove_median_darkfield_distributor(chunk):
-    # Where are we pulling data from within the lists?
-    starts = _mp_state[0]
-    stops = _mp_state[1]
-    return _remove_dynamic_median(*_mp_state[2:], start=starts[chunk], stop=stops[chunk])
+    return _run_chunk(_remove_dynamic_median, chunk)
 
 
 def _filter_and_binarize_images_distributor(chunk):
-    # Where are we pulling data from within the lists?
-    starts = _mp_state[0]
-    stops = _mp_state[1]
-    return _filter_and_binarize_image(*_mp_state[2:], start=starts[chunk], stop=stops[chunk])
+    return _run_chunk(_filter_and_binarize_image, chunk)
 
 
 def _remove_dynamic_median(raw_image_stack, median_size_through_omega=25, start=0, stop=0):
