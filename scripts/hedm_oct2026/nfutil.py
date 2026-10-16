@@ -770,7 +770,7 @@ def _test_many_orientations_at_many_coordinates(experiment, image_stack, coordin
                 exp_map, confidence, idx = _test_many_orientations_at_single_coordinate(
                     experiment, image_stack, coord_to_test, orientation_data_to_test)
             all_exp_maps[i, :] = exp_map
-            all_confidence[i] = confidence
+            all_confidence[i] = np.squeeze(confidence)
             all_idx[i] = idx
     else:
         # We have chunked the orientations
@@ -811,8 +811,12 @@ def _test_many_orientations_at_many_coordinates(experiment, image_stack, coordin
             coord_to_test = coordinates_to_test[i, :]
             single_orientation_data_to_test = _precompute_diffraction_data_of_single_orientation(
                 experiment, all_exp_maps[i])
-            all_exp_maps[i], all_confidence[i], all_misorientation[i] = _test_single_orientation_at_single_coordinate(
+            exp_map, confidence, misorientation = _test_single_orientation_at_single_coordinate(
                 experiment, image_stack, coord_to_test, single_orientation_data_to_test, refine_yes_no=1)
+            # these come back as arrays with one element, which numpy will not put in a single element
+            all_exp_maps[i] = np.squeeze(exp_map)
+            all_confidence[i] = np.squeeze(confidence)
+            all_misorientation[i] = np.squeeze(misorientation)
 
     return all_exp_maps, all_confidence, all_idx, all_misorientation, start, stop
 
@@ -2992,8 +2996,8 @@ def calibrate_parameter(experiment, controller, image_stack, calibration_paramet
         # Take the max - It's simple but will not throw any fits if we do not have a nice curve like a fitter might
         best_val = parameter_space[np.where(
             confidence_to_plot == np.max(confidence_to_plot))[0]]
-        if len(best_val) > 1:
-            best_val = best_val[0]
+        # Take the first one if there is a tie. This is a single number, not a one element array
+        best_val = best_val[0]
 
         # Place the value where it needs to be
         if parameter_number > 2 and parameter_number < 6:

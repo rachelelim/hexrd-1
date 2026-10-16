@@ -58,7 +58,7 @@ def generate_orientation_grid(experiment: Any) -> Tuple[np.ndarray, np.ndarray]:
         )
     )
     exp_maps = np.array([
-        2 * np.arccos(quats[0, i]) * xfcapi.unitRowVector(quats[1:, i])
+        2 * np.arccos(quats[0, i]) * xfcapi.unit_vector(quats[1:, i])
         for i in range(quats.shape[1])
     ])
     return quats, exp_maps
