@@ -9,7 +9,7 @@ import sys
 import numpy as np
 import yaml
 
-# nfutil lives in the parent (NF_Oct2026) folder
+# nfutil lives in the parent (hedm_oct2026) folder
 sys.path.insert(
     0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

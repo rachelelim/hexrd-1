@@ -314,9 +314,13 @@ def worker_init(id_state, id_exp):
 
 
 def set_multiprocessing_method(multiprocessing_start_method):
-    # Set multiprocessing method if not already done
-    if multiprocessing.get_start_method() != multiprocessing_start_method:
-        multiprocessing.set_start_method(multiprocessing_start_method)
+    # Set multiprocessing method if not already done.
+    # allow_none=True so that asking does not fix the default method (which is
+    # 'forkserver' on Linux from Python 3.14), and force=True because the method
+    # may already have been fixed, by an earlier call or by the notebook
+    if multiprocessing.get_start_method(allow_none=True) != multiprocessing_start_method:
+        multiprocessing.set_start_method(
+            multiprocessing_start_method, force=True)
 
 
 @contextlib.contextmanager
