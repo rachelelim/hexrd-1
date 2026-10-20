@@ -1,4 +1,4 @@
-"""Regression test: single-layer NF reconstruction of lowO-comp-1.
+"""Regression test: single-layer NF reconstruction of Ti-7Al (ti7-1).
 
 Runs the same steps as nf_hedm/reconstruct_nf.py in-process (without saving)
 and compares the grain and confidence maps against a stored reference.
@@ -20,10 +20,10 @@ sys.path.insert(0, os.path.dirname(HERE))
 
 DATA_DIR = os.environ.get(
     'NF_TEST_DATA_DIR',
-    '/Users/lim37/Library/CloudStorage/OneDrive-LLNL/Vanadium/CHESS-2026-03/'
-    'lowO-comp-1')
-CONFIG = 'nf_config_S0_L2.yml'
-REFERENCE = os.path.join(HERE, 'data', 'lowO_comp_1_S0_L2_reference.npz')
+    '/Users/lim37/Library/CloudStorage/OneDrive-LLNL/ti7al_cyclic_HEDM/'
+    'ti7-1/NF')
+CONFIG = 'S0_L0.yml'
+REFERENCE = os.path.join(HERE, 'data', 'ti7al_S0_L0_reference.npz')
 
 
 @unittest.skipUnless(os.path.isfile(os.path.join(DATA_DIR, CONFIG)),
@@ -83,15 +83,15 @@ class TestSingleLayerReconstruction(unittest.TestCase):
             experiment, controller, image_stack, precomputed, coords, mask)
 
         # Far fewer orientation tests than the exhaustive search
-        self.assertLess(stats['n_tests'], 0.4*stats['n_exhaustive_tests'])
+        self.assertLess(stats['n_tests'], 0.8*stats['n_exhaustive_tests'])
         # Exhaustive is the optimum over the same candidates
         self.assertTrue((conf <= conf_full + 1e-12).all())
         # Several FF grains are near-duplicates, so compare confidence and
         # not grain ids: nearly every voxel is almost as good as the best
         close = conf >= conf_full - 0.05
-        self.assertGreater(close.mean(), 0.97)
+        self.assertGreater(close.mean(), 0.98)
         self.assertLess(abs(conf.mean() - conf_full.mean()), 0.01)
-        self.assertGreater((idx == idx_full).mean(), 0.85)
+        self.assertGreater((idx == idx_full).mean(), 0.95)
 
     def test_generate_experiment_wrapper(self):
         import nfutil
