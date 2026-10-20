@@ -90,6 +90,11 @@ found = nfutil.find_missing_orientations(experiment, controller, image_stack,
 orientation_data = nfutil.add_orientations(experiment, orientation_data, found['exp_maps'])
 ```
 
+`find_missing_orientations` drops a result within `known_tol_deg` (1 degree, symmetry aware) of an orientation
+already in the list, because it refines an existing grain and is not missing from it (`found['n_known']` counts
+them). On the Ti-7Al final scan, 5 of the 8 orientations the search kept were 0.1 to 0.2 degrees from an FF grain,
+and the other 3 were 2.4 to 3.4 degrees from one. Pass `known_tol_deg=None` to keep them all.
+
 ## What to expect
 
 Tested on a Ti-7Al layer (619 FF grains, 9 CPUs):

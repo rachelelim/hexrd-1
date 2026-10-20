@@ -10,7 +10,7 @@ from hexrd import rotations
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from nfutil.orientation_search import (  # noqa: E402
-    merge_orientations, misorientation_deg, separate_candidates)
+    known_orientations, merge_orientations, misorientation_deg, separate_candidates)
 
 Q_SYM = rotations.quatOfLaueGroup('d6h')
 
@@ -88,6 +88,33 @@ class TestMerge(unittest.TestCase):
 
     def test_empty(self):
         self.assertEqual(len(merge_orientations(np.zeros((0, 3)), np.zeros(0), Q_SYM, 1.0)), 0)
+
+
+class TestKnownOrientations(unittest.TestCase):
+
+    def setUp(self):
+        self.ff = np.array([[0.4, 0.1, -0.3], [-0.2, 0.5, 0.1], [0.1, -0.4, 0.6]])
+
+    def test_near_copy_is_known(self):
+        copies = np.array([rotate(self.ff[1], 0.2, [0, 0, 1]), rotate(self.ff[0], 0.9, [1, 0, 0])])
+        self.assertTrue(known_orientations(copies, self.ff, Q_SYM, 1.0).all())
+
+    def test_distinct_orientation_is_not_known(self):
+        far = np.array([rotate(self.ff[1], 2.4, [0, 0, 1]), rotate(self.ff[0], 20, [1, 1, 0])])
+        self.assertFalse(known_orientations(far, self.ff, Q_SYM, 1.0).any())
+
+    def test_tolerance_sets_the_limit(self):
+        em = np.array([rotate(self.ff[2], 2.4, [0, 1, 0])])
+        self.assertFalse(known_orientations(em, self.ff, Q_SYM, 1.0)[0])
+        self.assertTrue(known_orientations(em, self.ff, Q_SYM, 3.0)[0])
+
+    def test_symmetry_equivalent_of_a_known_orientation_is_known(self):
+        flipped = (R.from_rotvec(self.ff[0]) * R.from_rotvec(np.radians(60)*np.array([0, 0, 1.]))).as_rotvec()
+        self.assertTrue(known_orientations(np.array([flipped]), self.ff, Q_SYM, 1.0)[0])
+
+    def test_nothing_known(self):
+        em = np.array([self.ff[0]])
+        self.assertFalse(known_orientations(em, np.zeros((0, 3)), Q_SYM, 1.0).any())
 
 
 if __name__ == '__main__':

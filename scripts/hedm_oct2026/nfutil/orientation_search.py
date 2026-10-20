@@ -85,6 +85,14 @@ def merge_orientations(exp_maps, confidence, q_sym, tol_deg):
         np.asarray(exp_maps), np.asarray(confidence), q_sym, tol_deg, len(exp_maps))
 
 
+def known_orientations(exp_maps, known_exp_maps, q_sym, tol_deg):
+    """True for each orientation within ``tol_deg`` of one of ``known_exp_maps`` (symmetry aware)."""
+    known_exp_maps = np.asarray(known_exp_maps, float).reshape(-1, 3)
+    if len(known_exp_maps) == 0:
+        return np.zeros(len(exp_maps), bool)
+    return np.array([misorientation_deg(em, known_exp_maps, q_sym).min() < tol_deg for em in exp_maps], bool)
+
+
 def search_orientations(experiment, controller, image_stack, coordinates,
                         grid_spacing_deg=1.75, grid_rings=12, n_candidates=200,
                         n_refine=20, n_final=4, coarse_rings=12,
@@ -186,7 +194,7 @@ def search_orientations(experiment, controller, image_stack, coordinates,
 def find_missing_orientations(experiment, controller, image_stack, orientation_data,
                               test_coordinates, mask, confidence_below=0.5,
                               max_voxels=60, min_gain=0.1, merge_tol_deg=1.0,
-                              **search_kwargs):
+                              known_tol_deg=1.0, **search_kwargs):
     """Look for orientations missing from the candidate list.
 
     Reconstructs with the spatially adaptive search over the current
@@ -194,12 +202,16 @@ def find_missing_orientations(experiment, controller, image_stack, orientation_d
     voxels (spread over the layer) whose confidence is below
     ``confidence_below``. An orientation is kept if it beats the voxel's
     current confidence by ``min_gain``, and orientations within
-    ``merge_tol_deg`` of each other are merged, keeping the best.
+    ``merge_tol_deg`` of each other are merged, keeping the best. An orientation
+    within ``known_tol_deg`` of one already in ``orientation_data`` is dropped
+    first, because it refines an existing grain and is not missing from the list
+    (``None`` or 0 keeps them).
 
     Returns a dictionary with ``exp_maps`` and ``confidence`` of the new
     orientations, ``voxels`` (the masked-voxel numbers they were found at),
-    ``current_confidence`` there, and the search ``stats``. Add them with
-    ``add_orientations`` and reconstruct again to use them.
+    ``current_confidence`` there, ``n_known`` (how many were dropped as already
+    known, counted before merging) and the search ``stats``. Add them with ``add_orientations`` and
+    reconstruct again to use them.
     """
     from .spatial_adaptive import reconstruct_spatially_adaptive
 
@@ -209,7 +221,7 @@ def find_missing_orientations(experiment, controller, image_stack, orientation_d
     low = np.where(confidence < confidence_below)[0]
     empty = dict(exp_maps=np.zeros((0, 3)), confidence=np.zeros(0),
                  voxels=np.zeros(0, int), current_confidence=np.zeros(0),
-                 stats={}, n_low_confidence=len(low))
+                 stats={}, n_low_confidence=len(low), n_known=0)
     if len(low) == 0:
         return empty
     if len(low) > max_voxels:
@@ -221,10 +233,18 @@ def find_missing_orientations(experiment, controller, image_stack, orientation_d
         empty['stats'] = stats
         return empty
     em, conf, voxels = em[good], conf[good], low[good]
+    n_known = 0
+    if known_tol_deg:
+        known = known_orientations(em, orientation_data[0], experiment.plane_data.q_sym, known_tol_deg)
+        n_known = int(known.sum())
+        em, conf, voxels = em[~known], conf[~known], voxels[~known]
+        if len(em) == 0:
+            empty['stats'], empty['n_known'] = stats, n_known
+            return empty
     keep = merge_orientations(em, conf, experiment.plane_data.q_sym, merge_tol_deg)
     return dict(exp_maps=em[keep], confidence=conf[keep], voxels=voxels[keep],
                 current_confidence=confidence[voxels[keep]], stats=stats,
-                n_low_confidence=int((confidence < confidence_below).sum()))
+                n_low_confidence=int((confidence < confidence_below).sum()), n_known=n_known)
 
 
 def add_orientations(experiment, orientation_data, new_exp_maps):
