@@ -109,8 +109,10 @@ class ReconstructionCases:
         # Refinement fits the images better than the grain orientations do
         self.assertGreater(conf.mean(), self.raw_confidence.mean() + 0.03)
         # and takes far fewer simulations than refining every voxel from its
-        # grain, which takes about 314 per voxel
-        self.assertLess(stats['n_simulated']/stats['n_voxels'], 0.6*314)
+        # grain, which takes about 314 per voxel. The march alone takes about
+        # half of that, and the two boundary passes add to it (more on the small
+        # unmasked grid, where a larger share of voxels are at a boundary).
+        self.assertLess(stats['n_simulated']/stats['n_voxels'], 0.7*314)
         # Orientations move by a fraction of a degree, as when each voxel is refined alone
         self.assertLess(np.median(misorientation), 0.25)
 
