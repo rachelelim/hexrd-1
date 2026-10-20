@@ -289,12 +289,58 @@ def march_refined(mask, global_fn, local_fn, converged_confidence=0.7,
     return exp_maps, confidence, origin, stats
 
 
+def boundary_band(origin, nbrs, width=2):
+    """Voxels at or near a boundary between grains, and the grains seen near each.
+
+    A boundary voxel has a neighbor that descends from a different grain.
+    ``width`` 1 is the boundary voxels, 2 adds the voxels touching them, and so
+    on. Returns ``voxels`` and ``bags``, where ``bags[i]`` holds the grains
+    (``origin`` values) found within ``width`` steps of ``voxels[i]``.
+    """
+    origin = np.asarray(origin)
+    valid = nbrs >= 0
+    differs = (valid & (origin[np.where(valid, nbrs, 0)] != origin[:, None])).any(axis=1)
+    band = differs.copy()
+    for _ in range(width - 1):
+        band = band | (band[np.where(valid, nbrs, 0)] & valid).any(axis=1)
+    seen = [{int(g)} for g in origin]
+    for _ in range(width):
+        seen = [set().union(seen[i], *(seen[j] for j in row[row >= 0])) for i, row in enumerate(nbrs)]
+    voxels = np.where(band)[0]
+    return voxels, [np.array(sorted(seen[i])) for i in voxels]
+
+
+def refine_boundaries(exp_maps, confidence, origin, nbrs, band_fn, width=2):
+    """Retest the voxels at and near grain boundaries against the grains around them.
+
+    The march lets a grain spread into weakly determined voxels along the grid
+    axes, which leaves boundaries made of straight steps. Here every voxel in
+    ``boundary_band`` is tested against the grains found within ``width`` steps
+    of it, and the best is refined, as when each voxel is refined on its own.
+
+    band_fn(voxels, bags) must return ``(exp_maps, confidence, origin, n_tests,
+    n_simulated)`` like the global function of ``march_refined``. The arrays are
+    changed in place. Returns a dict of statistics.
+    """
+    voxels, bags = boundary_band(origin, nbrs, width)
+    stats = dict(n_band=len(voxels), n_band_changed=0, n_band_tests=0, n_band_simulated=0)
+    if len(voxels) == 0:
+        return stats
+    before = origin[voxels].copy()
+    em, conf, org, n_tests, n_simulated = band_fn(voxels, bags)
+    exp_maps[voxels] = em
+    confidence[voxels] = conf
+    origin[voxels] = org
+    stats.update(n_band_changed=int((org != before).sum()), n_band_tests=n_tests, n_band_simulated=n_simulated)
+    return stats
+
+
 def reconstruct_and_refine_spatially_adaptive(
         experiment, controller, image_stack, orientation_data,
         test_coordinates, mask, converged_confidence=0.7, drop_off=0.8,
         seed_spacing=8, connectivity=6, global_radii=(1.0, 0.5, 0.25, 0.1),
         local_radii=(0.25, 0.1), parallel_min_voxels=2000,
-        parallel_min_voxels_refine=100):
+        parallel_min_voxels_refine=100, boundary_width=2, boundary_passes=2):
     """Drop-in alternative to ``test_orientations_at_coordinates`` with
     ``refine_yes_no=1, return_misorientation=1``.
 
@@ -310,6 +356,12 @@ def reconstruct_and_refine_spatially_adaptive(
     raw_misorientation the distance (degrees) from that grain's orientation.
     Voxels of a refinement batch smaller than ``parallel_min_voxels_refine``
     are refined in this process.
+
+    The march lets grains spread into weak voxels along the grid axes, so the
+    boundaries come out as straight steps. With ``boundary_width`` > 0 the
+    voxels within that many steps of a boundary are retested against the grains
+    around them and refined (see ``refine_boundaries``), ``boundary_passes``
+    times. 0 turns it off.
     """
     grain_exp_maps = np.asarray(orientation_data[0], float).reshape(-1, 3)
     n_oris = len(grain_exp_maps)
@@ -323,8 +375,8 @@ def reconstruct_and_refine_spatially_adaptive(
             return [inline(*tail, start=0, stop=n)]
         return run_chunked(controller, n, controller.get_chunk_size(), tail, distributor, inline)
 
-    def global_fn(voxels):
-        best, conf, n_tests = test_fn(voxels, [everything]*len(voxels))
+    def global_fn(voxels, bags=None):
+        best, conf, n_tests = test_fn(voxels, [everything]*len(voxels) if bags is None else bags)
         coords = test_coordinates[voxels]
         results = pool_or_inline(
             len(voxels), (experiment, image_stack, coords, grain_exp_maps[best], tuple(global_radii)),
@@ -344,6 +396,14 @@ def reconstruct_and_refine_spatially_adaptive(
 
     exp_maps, confidence, origin, stats = march_refined(
         mask, global_fn, local_fn, converged_confidence, drop_off, seed_spacing, connectivity)
+    if boundary_width > 0:
+        nbrs = neighbor_table(mask, connectivity)
+        stats.update(n_band=0, n_band_changed=0, n_band_tests=0, n_band_simulated=0)
+        for _ in range(boundary_passes):
+            for key, value in refine_boundaries(exp_maps, confidence, origin, nbrs, global_fn, boundary_width).items():
+                stats[key] += value
+        stats['n_simulated'] += stats['n_band_simulated']
+        stats['n_grain_tests'] += stats['n_band_tests']
 
     q_sym = experiment.plane_data.q_sym
     misorientation = np.zeros(len(origin))

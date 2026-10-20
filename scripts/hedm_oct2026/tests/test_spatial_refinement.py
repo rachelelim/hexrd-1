@@ -13,7 +13,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from nfutil.processor_functions import _pattern_search_refine  # noqa: E402
-from nfutil.spatial_adaptive import march_refined  # noqa: E402
+from nfutil.spatial_adaptive import boundary_band, march_refined, neighbor_table, refine_boundaries  # noqa: E402
 
 GLOBAL_RADII = (1.0, 0.5, 0.25, 0.1)
 LOCAL_RADII = (0.25, 0.1)
@@ -130,6 +130,63 @@ class TestMarchRefined(unittest.TestCase):
         em, conf, origin, stats = march_refined(mask, p.global_fn, p.make_local_fn(), seed_spacing=100)
         self.assertTrue((conf > 0).all())
         np.testing.assert_array_equal(origin, grain[mask])
+
+
+class TestBoundaryPass(unittest.TestCase):
+
+    def band_fn(self, phantom):
+        """The phantom's global_fn, testing only the grains in each voxel's bag."""
+        def fn(voxels, bags):
+            em = np.zeros((len(voxels), 3)); conf = np.zeros(len(voxels)); origin = np.zeros(len(voxels), int)
+            for i, (v, bag) in enumerate(zip(voxels, bags)):
+                scores = np.array([phantom.confidence(v, phantom.ff[k][None])[0] for k in bag])
+                origin[i] = bag[int(np.argmax(scores))]
+                em[i], conf[i] = _pattern_search_refine(
+                    phantom.ff[origin[i]], lambda t, v=v: phantom.confidence(v, t), GLOBAL_RADII)
+            return em, conf, origin, 0, 0
+        return fn
+
+    def test_band_of_two_grains(self):
+        mask = np.ones((1, 4, 8), bool)
+        origin = np.where(np.arange(8) < 4, 3, 7)[None, :].repeat(4, axis=0).ravel()
+        nbrs = neighbor_table(mask)
+        for width, columns in ((1, [3, 4]), (2, [2, 3, 4, 5]), (3, [1, 2, 3, 4, 5, 6])):
+            voxels, bags = boundary_band(origin, nbrs, width)
+            self.assertEqual(sorted(set(voxels % 8)), columns)
+            self.assertEqual(len(voxels), 4*len(columns))
+            for bag in bags:
+                np.testing.assert_array_equal(bag, [3, 7])   # both grains, from the voxels touching the boundary and from those behind
+
+    def test_no_boundary_in_one_grain(self):
+        mask = np.ones((1, 5, 5), bool)
+        voxels, bags = boundary_band(np.zeros(25, int), neighbor_table(mask), 2)
+        self.assertEqual(len(voxels), 0)
+
+    def test_restores_boundary_voxels_the_march_gave_to_the_wrong_grain(self):
+        p = Phantom()
+        em, conf, origin, _ = march_refined(p.mask, p.global_fn, p.make_local_fn(), seed_spacing=8)
+        nbrs = neighbor_table(p.mask)
+        voxels, _ = boundary_band(origin, nbrs, 1)
+        # let the neighboring grain spread one voxel into every boundary voxel it can, as the march does
+        wrong = []
+        for v in voxels:
+            others = [origin[u] for u in nbrs[v] if u >= 0 and origin[u] != origin[v]]
+            if others and origin[v] == p.grain_flat[v]:
+                origin[v] = others[0]
+                em[v] = p.ff[others[0]]
+                conf[v] = 0.3
+                wrong.append(v)
+        self.assertGreater(len(wrong), 20)
+        outside = np.setdiff1d(np.arange(len(origin)), boundary_band(origin, nbrs, 2)[0])
+        before = origin.copy(), em.copy()
+        stats = refine_boundaries(em, conf, origin, nbrs, self.band_fn(p), width=2)
+        self.assertGreater((origin[wrong] == p.grain_flat[wrong]).mean(), 0.9)
+        self.assertGreater((origin == p.grain_flat).mean(), 0.97)
+        self.assertGreater(stats['n_band_changed'], 0.9*len(wrong))
+        self.assertEqual(stats['n_band'], len(boundary_band(before[0], nbrs, 2)[0]))
+        # voxels away from the boundary are not touched
+        np.testing.assert_array_equal(origin[outside], before[0][outside])
+        np.testing.assert_array_equal(em[outside], before[1][outside])
 
 
 if __name__ == '__main__':

@@ -104,6 +104,11 @@ parser.add_argument('--drop-off', type=float, default=0.8,
                     'this fraction of the voxel it starts from')
 parser.add_argument('--seed-spacing', type=int, default=8,
                     help='Voxel spacing of the seed grid, whose voxels are tested against every FF grain')
+parser.add_argument('--boundary-width', type=int, default=2,
+                    help='With --spatially-adaptive, retest the voxels within this many steps of a grain '
+                    'boundary against the grains around them (0 turns it off)')
+parser.add_argument('--boundary-passes', type=int, default=2,
+                    help='How many times the boundary pass is run')
 
 
 args = parser.parse_args()
@@ -137,7 +142,8 @@ if args.spatially_adaptive:
     raw_exp_maps, raw_confidence, raw_idx, raw_misorientation, stats = nfutil.reconstruct_and_refine_spatially_adaptive(
         experiment, controller, image_stack, precomputed_orientation_data, test_coordinates, mask,
         converged_confidence=args.converged_confidence, drop_off=args.drop_off,
-        seed_spacing=args.seed_spacing)
+        seed_spacing=args.seed_spacing, boundary_width=args.boundary_width,
+        boundary_passes=args.boundary_passes)
     print(f"Refined along the marching: {stats['n_local']} voxels started from their neighbors, "
           f"{stats['n_seed'] + stats['n_global']} from the best FF grain; "
           f"{stats['n_simulated']} orientations simulated "
