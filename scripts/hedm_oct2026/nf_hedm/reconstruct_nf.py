@@ -92,6 +92,17 @@ parser = argparse.ArgumentParser(description='Reconstruct NF microstructure')
 parser.add_argument('input_file',
                     help='Input file for NF reconstruction')
 
+parser.add_argument('--spatially-adaptive', action='store_true',
+                    help='Test each voxel against its neighbors\' grains first and only '
+                    'search all grains where that fails (faster, ~97%% of voxels '
+                    'agree with the full search)')
+parser.add_argument('--converged-confidence', type=float, default=0.7,
+                    help='Confidence above which a voxel seeds its neighbors')
+parser.add_argument('--drop-off', type=float, default=0.8,
+                    help='A neighbor is accepted if its confidence is at least '
+                    'this fraction of the voxel it copies from')
+parser.add_argument('--seed-spacing', type=int, default=8,
+                    help='Voxel spacing of the grid searched exhaustively to start')
 
 args = parser.parse_args()
 configuration_filepath = args.input_file
@@ -128,8 +139,18 @@ precomputed_orientation_data = nfutil.precompute_diffraction_data(
 # %% ==========================================================================
 # TEST ORIENTATIONS AND PROCESS OUTPUT
 # =============================================================================
-raw_exp_maps, raw_confidence, raw_idx = nfutil.test_orientations_at_coordinates(
-    experiment, controller, image_stack, precomputed_orientation_data, test_coordinates, refine_yes_no=0)
+if args.spatially_adaptive:
+    raw_exp_maps, raw_confidence, raw_idx, stats = nfutil.reconstruct_spatially_adaptive(
+        experiment, controller, image_stack, precomputed_orientation_data, test_coordinates, mask,
+        converged_confidence=args.converged_confidence, drop_off=args.drop_off,
+        seed_spacing=args.seed_spacing)
+    print(f"Spatially adaptive reconstruction used {stats['n_tests']} of {stats['n_exhaustive_tests']} "
+          f"orientation tests ({100*stats['n_tests']/stats['n_exhaustive_tests']:.1f}%): "
+          f"{stats['n_local']} voxels copied from neighbors, "
+          f"{stats['n_seed'] + stats['n_global']} searched over all grains.")
+else:
+    raw_exp_maps, raw_confidence, raw_idx = nfutil.test_orientations_at_coordinates(
+        experiment, controller, image_stack, precomputed_orientation_data, test_coordinates, refine_yes_no=0)
 grain_map, confidence_map = nfutil.process_raw_data(
     raw_confidence, raw_idx, Xs.shape, mask=mask, id_remap=experiment.remap)
 

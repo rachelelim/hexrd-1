@@ -553,6 +553,53 @@ def _test_many_orientations_at_many_coordinates(experiment, image_stack, coordin
     return all_exp_maps, all_confidence, all_idx, all_misorientation, start, stop
 
 
+def _test_orientation_bags_at_coordinates(experiment, image_stack, orientation_data, coordinates, bags, start=0, stop=0):
+    """
+        Goal:
+            Test a different, small set of orientations ("bag") at each coordinate.
+        Input:
+            orientation_data: precomputed data (exp_maps, angles, rMat_ss, gvec_cs, rMat_c) of all candidate orientations
+            coordinates: (n, 3) coordinates, only [start:stop] are tested
+            bags: list of n arrays, bags[i] holds the indices into orientation_data to test at coordinate i
+        Output:
+            best_idx: index into orientation_data of the best orientation at each coordinate
+            best_confidence: its confidence
+            n_tests: number of orientation/coordinate tests performed
+    """
+    # Grab some experiment data
+    tD = experiment.tVec_d  # Detector X,Y,Z translation (mm)
+    rD = experiment.rMat_d  # Detector rotation matrix (rad)
+    tS = experiment.tVec_s  # Sample X,Y,Z translation (mm)
+    base = experiment.base
+    inv_deltas = experiment.inv_deltas
+    clip_vals = experiment.clip_vals
+    bsp = experiment.bsp
+    ome_edges = experiment.ome_edges
+    _, all_angles, all_rMat_ss, all_gvec_cs, all_rMat_c = orientation_data
+
+    n_coords = stop - start
+    best_idx = np.zeros(n_coords, int)
+    best_confidence = np.zeros(n_coords)
+    n_tests = 0
+    for i in np.arange(n_coords):
+        coord_to_test = coordinates[start + i]
+        bag = bags[start + i]
+        best = -1.0
+        for ori in bag:
+            det_xy = xfcapi.gvec_to_xy(
+                all_gvec_cs[ori], rD, all_rMat_ss[ori], all_rMat_c[ori], tD, tS, coord_to_test)
+            confidence = _quant_and_clip_confidence(det_xy, all_angles[ori][:, 2], image_stack,
+                                                    base, inv_deltas, clip_vals, bsp, ome_edges)
+            # Strictly greater, so a tie goes to the first orientation in the bag
+            if confidence > best:
+                best = confidence
+                best_idx[i] = ori
+        best_confidence[i] = best
+        n_tests += len(bag)
+
+    return best_idx, best_confidence, n_tests, start, stop
+
+
 def _precompute_diffraction_data_of_single_orientation(experiment, exp_map):
     """
         Goal:
@@ -1150,6 +1197,10 @@ def _test_many_orientations_at_many_coordinates_distributor(chunk):
 
 def _load_images_distributor(chunk):
     return _run_chunk(_load_images, chunk)
+
+
+def _test_orientation_bags_at_coordinates_distributor(chunk):
+    return _run_chunk(_test_orientation_bags_at_coordinates, chunk)
 
 
 def _remove_median_darkfield_distributor(chunk):
