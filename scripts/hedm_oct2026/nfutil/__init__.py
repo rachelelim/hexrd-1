@@ -10,5 +10,5 @@ from .graphics import *  # noqa: F401,F403
 from .process_controller import *  # noqa: F401,F403
 from .processor_functions import *  # noqa: F401,F403
 from .utilities import *  # noqa: F401,F403
-from .spatial_adaptive import reconstruct_spatially_adaptive  # noqa: F401
+from .spatial_adaptive import reconstruct_spatially_adaptive, reconstruct_and_refine_spatially_adaptive  # noqa: F401
 from .orientation_search import search_orientations, find_missing_orientations, add_orientations  # noqa: F401

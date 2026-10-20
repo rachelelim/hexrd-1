@@ -39,6 +39,28 @@ def make_chunks(n_items, ncpus, chunk_size=-1):
     return chunks, starts, stops, chunk_size
 
 
+def run_chunked(controller, n_items, chunk_size, worker_state_tail, distributor, inline):
+    """Run one of the pool workers over n_items and return its results in order, one per chunk.
+
+    ``worker_state_tail`` is the state after the (starts, stops) pair, ``inline``
+    is the worker function to call in this process when there is one CPU.
+    """
+    ncpus = controller.get_process_count()
+    chunks, starts, stops, _ = make_chunks(n_items, ncpus, chunk_size)
+    if ncpus == 1 or len(chunks) == 1:
+        return [inline(*worker_state_tail, start=int(a), stop=int(b))
+                for a, b in zip(starts, stops)]
+    state = (starts, stops) + tuple(worker_state_tail)
+    results = [None] * len(chunks)
+    set_multiprocessing_method(controller.multiprocessing_start_method)
+    with multiprocessing_pool(ncpus, state) as pool:
+        for k, res in enumerate(pool.imap(distributor, chunks)):
+            results[k] = res
+        pool.close()
+        pool.join()
+    return results
+
+
 def worker_init(id_state, id_exp):
     """process initialization function. This function is only used when the
     child processes are spawned (instead of forked). When using the fork model
@@ -207,7 +229,7 @@ def _quant_and_clip_confidence(coords, angles, image,
 REFINEMENT_RADII_DEG = [5.0, 4., 3.5, 3., 2.5, 2., 1.5, 1.0, 0.5, 0.25, 0.1]
 
 
-def _pattern_search_refine(start_exp_map, cost, radii_deg, max_recenters=100):
+def _pattern_search_refine(start_exp_map, cost, radii_deg, max_recenters=100, start_confidence=None):
     """Coarse-to-fine pattern search for the orientation with the highest cost.
 
     At each radius (in degrees) a 3x3x3 grid of exp-map offsets (-r, 0, +r on
@@ -223,10 +245,12 @@ def _pattern_search_refine(start_exp_map, cost, radii_deg, max_recenters=100):
     same grid again. The result is the same as scoring all 27 points every time.
 
     ``cost`` takes an (n, 3) array of exp-maps and returns n confidences.
+    ``start_confidence`` is the cost of the starting orientation, if it is
+    already known (it must be exactly what ``cost`` returns for it).
     Returns ``exp_map, confidence`` of the best orientation found.
     """
     exp_map = np.asarray(start_exp_map, dtype=float)
-    confidence = None    # cost of exp_map, once it has been scored
+    confidence = start_confidence    # cost of exp_map, once it has been scored
     for mis in radii_deg:
         mis_amt = np.radians(mis)
         # Create a linup of the orientations to go on either side
@@ -651,6 +675,51 @@ def _refine_orientations_at_coordinates(experiment, image_stack, coordinates, st
             start_exp_maps[start + i], cost, radii_deg)
         n_evals += counter[0]
     return exp_maps, confidence, n_evals, start, stop
+
+
+def _refine_from_candidates(experiment, image_stack, coordinates, candidates, reference, drop_off, radii_deg, start=0, stop=0):
+    """
+        Goal:
+            At each coordinate, score a few candidate orientations (the refined orientations of the
+            neighboring voxels). If the best is at least drop_off times the reference confidence, refine it.
+        Input:
+            coordinates: (T, 3) coordinates, only [start:stop] are used
+            candidates: list of T arrays (k, 3) of candidate exp-maps
+            reference: (T,) confidence of the best neighbor
+            radii_deg: search radii of the refinement, see _pattern_search_refine
+        Output:
+            exp_maps, confidence: the refined orientation if accepted, else the best candidate as it is
+            pick: which candidate was best
+            accepted: whether it was good enough to refine
+            n_evals: number of orientations simulated and scored
+    """
+    n = stop - start
+    exp_maps = np.zeros((n, 3))
+    confidence = np.zeros(n)
+    pick = np.zeros(n, int)
+    accepted = np.zeros(n, bool)
+    n_evals = 0
+    for i in np.arange(n):
+        coord = coordinates[start + i]
+        options = np.atleast_2d(candidates[start + i])
+        scores = _orientation_confidences(experiment, image_stack, coord, options)
+        n_evals += len(options)
+        best = int(np.argmax(scores))
+        pick[i] = best
+        exp_maps[i] = options[best]
+        confidence[i] = scores[best]
+        if scores[best] >= drop_off*reference[start + i]:
+            accepted[i] = True
+            counter = [0]
+
+            def cost(trial_exp_maps):
+                counter[0] += len(trial_exp_maps)
+                return _orientation_confidences(experiment, image_stack, coord, trial_exp_maps)
+
+            exp_maps[i], confidence[i] = _pattern_search_refine(
+                options[best], cost, radii_deg, start_confidence=scores[best])
+            n_evals += counter[0]
+    return exp_maps, confidence, pick, accepted, n_evals, start, stop
 
 
 def _precompute_diffraction_data_of_single_orientation(experiment, exp_map):
@@ -1222,6 +1291,10 @@ def _grid_top_candidates_distributor(chunk):
 
 def _refine_orientations_distributor(chunk):
     return _run_chunk(_refine_orientations_at_coordinates, chunk)
+
+
+def _refine_from_candidates_distributor(chunk):
+    return _run_chunk(_refine_from_candidates, chunk)
 
 
 def _remove_median_darkfield_distributor(chunk):

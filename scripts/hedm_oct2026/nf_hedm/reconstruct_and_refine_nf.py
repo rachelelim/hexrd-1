@@ -93,6 +93,17 @@ parser = argparse.ArgumentParser(description='Reconstruct NF microstructure with
 
 parser.add_argument('input_file',
                     help='Input file for NF reconstruction')
+parser.add_argument('--spatially-adaptive', action='store_true',
+                    help='Refine each voxel starting from its neighbors\' refined orientations '
+                    'instead of from its grain\'s FF orientation. About 5 times faster, follows '
+                    'orientation gradients inside grains, and gives about the same confidence')
+parser.add_argument('--converged-confidence', type=float, default=0.7,
+                    help='Confidence above which a voxel seeds its neighbors')
+parser.add_argument('--drop-off', type=float, default=0.8,
+                    help='A neighbor is accepted if its confidence is at least '
+                    'this fraction of the voxel it starts from')
+parser.add_argument('--seed-spacing', type=int, default=8,
+                    help='Voxel spacing of the seed grid, whose voxels are tested against every FF grain')
 
 
 args = parser.parse_args()
@@ -122,8 +133,18 @@ precomputed_orientation_data = nfutil.precompute_diffraction_data(
 # %% ==========================================================================
 # TEST ORIENTATIONS AND PROCESS OUTPUT
 # =============================================================================
-raw_exp_maps, raw_confidence, raw_idx, raw_misorientation = nfutil.test_orientations_at_coordinates(
-    experiment, controller, image_stack, precomputed_orientation_data, test_coordinates, refine_yes_no=1, return_misorientation=1)
+if args.spatially_adaptive:
+    raw_exp_maps, raw_confidence, raw_idx, raw_misorientation, stats = nfutil.reconstruct_and_refine_spatially_adaptive(
+        experiment, controller, image_stack, precomputed_orientation_data, test_coordinates, mask,
+        converged_confidence=args.converged_confidence, drop_off=args.drop_off,
+        seed_spacing=args.seed_spacing)
+    print(f"Refined along the marching: {stats['n_local']} voxels started from their neighbors, "
+          f"{stats['n_seed'] + stats['n_global']} from the best FF grain; "
+          f"{stats['n_simulated']} orientations simulated "
+          f"({stats['n_simulated']/stats['n_voxels']:.0f} per voxel).")
+else:
+    raw_exp_maps, raw_confidence, raw_idx, raw_misorientation = nfutil.test_orientations_at_coordinates(
+        experiment, controller, image_stack, precomputed_orientation_data, test_coordinates, refine_yes_no=1, return_misorientation=1)
 grain_map, confidence_map, misorientation_map = nfutil.process_raw_data(
     raw_confidence, raw_idx, Xs.shape, mask=mask, id_remap=experiment.remap, raw_misorientation=raw_misorientation)
 

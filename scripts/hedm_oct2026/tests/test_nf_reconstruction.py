@@ -97,6 +97,46 @@ class ReconstructionCases:
         self.assertGreater((idx == self.raw_idx).mean(), self.min_same_grain)
 
 
+    def test_refinement_along_the_marching_agrees_with_refining_each_voxel(self):
+        import nfutil
+        from nfutil.orientation_search import misorientation_deg
+
+        exp_maps, conf, origin, misorientation, stats = \
+            nfutil.reconstruct_and_refine_spatially_adaptive(
+                self.experiment, self.controller, self.experiment.image_stack,
+                self.precomputed, self.coords, self.mask)
+
+        # Refinement fits the images better than the grain orientations do
+        self.assertGreater(conf.mean(), self.raw_confidence.mean() + 0.03)
+        # and takes far fewer simulations than refining every voxel from its
+        # grain, which takes about 314 per voxel
+        self.assertLess(stats['n_simulated']/stats['n_voxels'], 0.6*314)
+        # Orientations move by a fraction of a degree, as when each voxel is refined alone
+        self.assertLess(np.median(misorientation), 0.25)
+
+        # Against refining a sample of voxels each on its own. The sample has more voxels than
+        # there are grains, so test_orientations_at_coordinates splits the work over voxels,
+        # as it does for a whole layer. With fewer it splits over grains and refines the best
+        # of each, which is a different (slower) method.
+        sample = np.random.default_rng(4).choice(len(self.coords), 800, replace=False)
+        alone_em, alone_conf, _, _ = nfutil.test_orientations_at_coordinates(
+            self.experiment, self.controller, self.experiment.image_stack, self.precomputed,
+            self.coords[sample], refine_yes_no=1, return_misorientation=1)
+        alone_conf = np.asarray(alone_conf).ravel()
+        # Not worse overall, and few voxels worse by much. On the full layers 97 to 99%
+        # are within 0.05, and a sample of 800 varies by about a percent.
+        self.assertGreater(conf[sample].mean(), alone_conf.mean() - 0.01)
+        self.assertGreater((conf[sample] >= alone_conf - 0.05).mean(), 0.94)
+        # Where they land on the same orientation they agree to a fraction of a
+        # degree. About 7% of voxels (the weakly determined ones, where another
+        # grain fits as well) end on different grains, and neither is better
+        # on average, so only that many are expected to differ.
+        q_sym = self.experiment.plane_data.q_sym
+        difference = np.array([misorientation_deg(alone_em[i], exp_maps[v][None], q_sym)[0]
+                               for i, v in enumerate(sample)])
+        self.assertGreater((difference < 0.3).mean(), 0.88)
+
+
 @unittest.skipUnless(HAVE_DATA, f'NF test data not found in {DATA_DIR}')
 class TestTi7AlUnmasked(ReconstructionCases, unittest.TestCase):
     """619 FF grains, hexagonal, 125x125 grid with no tomo mask."""

@@ -23,7 +23,7 @@ import numpy as np
 from hexrd import rotations
 
 from .processor_functions import (
-    make_chunks, multiprocessing_pool, set_multiprocessing_method,
+    run_chunked,
     _grid_top_candidates, _grid_top_candidates_distributor,
     _refine_orientations_at_coordinates, _refine_orientations_distributor,
     _precompute_diffraction_data_of_many_orientations)
@@ -85,28 +85,6 @@ def merge_orientations(exp_maps, confidence, q_sym, tol_deg):
         np.asarray(exp_maps), np.asarray(confidence), q_sym, tol_deg, len(exp_maps))
 
 
-def _run_pool(controller, n_items, chunk_size, worker_state_tail, distributor, inline):
-    """Run one of the pool workers over n_items and return its results in order.
-
-    ``worker_state_tail`` is the state after the (starts, stops) pair, ``inline``
-    is the worker function to call in this process when there is one CPU.
-    """
-    ncpus = controller.get_process_count()
-    chunks, starts, stops, _ = make_chunks(n_items, ncpus, chunk_size)
-    if ncpus == 1 or len(chunks) == 1:
-        return [inline(*worker_state_tail, start=int(a), stop=int(b))
-                for a, b in zip(starts, stops)]
-    state = (starts, stops) + tuple(worker_state_tail)
-    results = [None] * len(chunks)
-    set_multiprocessing_method(controller.multiprocessing_start_method)
-    with multiprocessing_pool(ncpus, state) as pool:
-        for k, res in enumerate(pool.imap(distributor, chunks)):
-            results[k] = res
-        pool.close()
-        pool.join()
-    return results
-
-
 def search_orientations(experiment, controller, image_stack, coordinates,
                         grid_spacing_deg=1.75, grid_rings=12, n_candidates=200,
                         n_refine=20, n_final=4, coarse_rings=12,
@@ -139,7 +117,7 @@ def search_orientations(experiment, controller, image_stack, coordinates,
         experiment.point_group_number, grid_spacing_deg)
     grid = np.ascontiguousarray(rotations.expMapOfQuat(quats.T).T)
     grid_experiment = ring_subset_experiment(experiment, grid_rings)
-    results = _run_pool(
+    results = run_chunked(
         controller, len(grid), grid_chunk,
         (grid_experiment, image_stack, grid, coordinates, n_candidates),
         _grid_top_candidates_distributor, _grid_top_candidates)
@@ -167,7 +145,7 @@ def search_orientations(experiment, controller, image_stack, coordinates,
 
     # 3. Coarse refinement of every cluster
     coarse_experiment = ring_subset_experiment(experiment, coarse_rings)
-    results = _run_pool(
+    results = run_chunked(
         controller, len(task_voxel), -1,
         (coarse_experiment, image_stack, task_coords, task_start, tuple(coarse_radii)),
         _refine_orientations_distributor, _refine_orientations_at_coordinates)
@@ -183,7 +161,7 @@ def search_orientations(experiment, controller, image_stack, coordinates,
     stats['coarse_refine_s'] = t2 - t1
 
     # 4. Fine refinement of the survivors with every ring
-    results = _run_pool(
+    results = run_chunked(
         controller, len(survivors), -1,
         (experiment, image_stack, task_coords[survivors], em[survivors], tuple(fine_radii)),
         _refine_orientations_distributor, _refine_orientations_at_coordinates)
