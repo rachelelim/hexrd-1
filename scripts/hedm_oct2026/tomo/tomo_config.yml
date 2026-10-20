@@ -1,58 +1,71 @@
-analysis_name: diamond-1a_S0_L1b # The name you want all your output files to have within thier filename (relevant to the sample)
+# Template config for `hexrd tomo` (nf_config format).
+#
+#   hexrd tomo pipeline    tomo_config.yml     all stages for the scan in tomography: spec:
+#   hexrd tomo reconstruct tomo_config.yml     the reconstruction only (needs the three filename: lines below)
+#
+# See README.md in this folder for what each value does.
 
-#main_directory: './' # Starting path for detector and materials file, if None this will default to working directory.
-output_directory: "./" # Path to save all output files, if None this will default to main_directory
+analysis_name: my_sample_S0 # Name of all output files (relevant to the sample)
+
+output_directory: "./" # Where `reconstruct` writes its files (`pipeline` writes to its run directory)
 
 input_files:
-  detector_file: "../../retiga_e7.yml" # Your detector file, if full path is not provided, will default to looking in main_directory
-# Do you want plots to show?
-output_plot_check: True
+  detector_file: "retiga_e7.yml" # Detector file: pixel size, rotation axis (tvec[0]), number of rows
+
+output_plot_check: False
 
 experiment:
-  # Incoming beam information
+  # Incoming beam information (not used by the tomography steps)
   beam_energy: 61.332 # keV
   beam_vertical_span: [-0.35, 0.35] # mm
 
 
 tomography:
-  # If you are running tomography in CHAP then none of this section will be used
-  # Load images and process tomography mask (depreciated version)
+  # The scan. `pipeline` finds the dark (scan - 2), bright (scan - 1) and tomo h5 files from the spec log,
+  # looking for them in tomo_dir. `reconstruct` can read the angular step from it too.
+  spec:
+    log: /path/to/spec.log
+    scan: 23 # spec scan number of the tomography scan
+    tomo_dir: /path/to/folder/with/retiga/h5/files
+
   img_stem: nf_
   filetype: h5
   num_digits: 6
-  bright:
-    filename: /p/vast1/trimet/chess_sep26/lind-4275-b/diamond-1a/22/nf/retiga_012546.h5
-  dark:
-    filename: /p/vast1/trimet/chess_sep26/lind-4275-b/diamond-1a/21/nf/retiga_012545.h5
-  tomo_images:
-    filename: /p/vast1/trimet/chess_sep26/lind-4275-b/diamond-1a/23/nf/retiga_012547.h5
-    num_images: 721
-  ome_start: 0.0 #degrees
+
+  # The h5 files. `reconstruct` needs these three lines; `pipeline` fills them in itself (leave them out), and
+  # uses a bright or dark file set here instead of the one found from the spec log.
+  # bright:
+  #   filename: /path/to/retiga_012546.h5
+  # dark:
+  #   filename: /path/to/retiga_012545.h5
+  # tomo_images:
+  #   filename: /path/to/retiga_012547.h5
+  #   num_images: 721
+
+  # Angles. By default they come from the spec log (rams pulse start/step) and the h5 timestamps.
+  # missing_slots: retiga_012547_missing_slots.txt # trigger slots with no frame, from `hexrd tomo missing-frames`
+  # theta_file: theta_deg.npy # one angle (deg) per frame; overrides the above
+  # deg_per_frame: 0.25 # angular step per trigger (deg)
+  ome_start: 0.0 # degrees (used if there is no spec log)
   ome_end: 180
+
   reconstruction:
-    mask_filepath: diamond-1a_S0_L0_tomo.npz # Absolute path or leave empty to not use a mask
-    project_single_layer: False # True uses the center mask layer for all vertical positions
-    vertical_motor_position: -0 # mm - What is the vertical motor's position?
-    voxel_spacing: 0.01
-    v_bnds: [0., 0.35] #[-0.45, 0.55]
+    voxel_spacing: 0.01 # mm
+    v_bnds: [-0.35, 0.35] # mm, vertical extent: layer 0 is the bottom
     x_center: 0
     z_center: 0
     x_length: 1.5
     z_length: 1.5
     #cross_sectional_dim: 2
 
-    #Don't change these unless you know what you are doing, this will close small holes
-    #and remove noise
+  # Don't change these unless you know what you are doing: they close small holes and remove noise
   processing:
-    recon_thresh: 0.0002 #usually varies between 0.0001 and 0.0005
+    recon_thresh: 0.0002 # usually varies between 0.0001 and 0.0005
     noise_obj_size: 300
     min_hole_size: 500
     erosion_iter: 2
     dilation_iter: 2
 
 multiprocessing:
-  num_cpus: 20 # Number of threads to use [all = os.cpu_count(), half = os.cpu_count()/2 (default), negative number = os.cpu_count()-num, positive number = num]
-  chunk_size: -1 # Use -1 if you wish automatic chunk size calculation
-  check: None
-  limit: None
-  generate: None
+  num_cpus: half # Worker processes: all = os.cpu_count(), half = os.cpu_count()/2 (default), negative number = os.cpu_count()-num, positive number = num
+  chunk_size: -1

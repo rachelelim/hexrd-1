@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Parse a SPEC log file into a list of scans.
 
 For each scan, the following are extracted:
@@ -6,20 +5,17 @@ For each scan, the following are extracted:
   #L <names...>        column names (separated by two or more spaces)
   <no leading #>       numerical data rows
 
-Usage:
-    python parse_spec.py spec.log            # print a summary table
-    python parse_spec.py spec.log 25         # print details of scan 25
-    python parse_spec.py spec.log --tomo     # tomography scans + det_exp_out stats
-    python parse_spec.py spec.log --tomo --csv det_exp_out.csv
-    python parse_spec.py spec.log --missing-slots-dir missing_slots
+From the command line (see ``hexrd tomo spec -h``):
+    hexrd tomo spec spec.log            # print a summary table
+    hexrd tomo spec spec.log 25         # print details of scan 25
+    hexrd tomo spec spec.log --tomo     # tomography scans + det_exp_out stats
 
 As a module:
-    from parse_spec import parse_spec
+    from hexrd.hedm.grainmap.tomo_spec import parse_spec
     scans = parse_spec("spec.log")           # dict: scan number -> Scan
     s = scans[25]
     s.command, s.columns, s.data["ome"]
 """
-import argparse
 import os
 import re
 from dataclasses import dataclass, field
@@ -121,60 +117,57 @@ def parse_spec(path):
     return scans
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("logfile")
-    ap.add_argument("scan", nargs="?", type=int, help="show details of this scan")
-    ap.add_argument("--tomo", action="store_true",
-                    help="list tomography scans with det_exp_out statistics")
-    ap.add_argument("--missing-slots-dir", metavar="DIR",
-                    help="write a <retiga stem>_missing_slots.txt (one 0-based "
-                         "slot per line) for every tomo scan, from det_exp_out")
-    ap.add_argument("--csv", metavar="OUT.csv",
-                    help="with --tomo: write per-point det_exp_out for every tomo scan")
-    args = ap.parse_args()
+def write_missing_slots(scans, out_dir):
+    """Write <retiga stem>_missing_slots.txt (one 0-based slot per line) for every tomo scan.
 
-    scans = parse_spec(args.logfile)
-    if args.missing_slots_dir:
-        os.makedirs(args.missing_slots_dir, exist_ok=True)
+    Slots come from det_exp_out. Returns [(scan number, number dropped, path)].
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    written = []
+    for s in (s for s in scans.values() if s.is_tomo):
+        stem = os.path.splitext(os.path.basename(s.retiga_file))[0] or f"scan_{s.number}"
+        slots = dropped_slots(s)
+        path = os.path.join(out_dir, f"{stem}_missing_slots.txt")
+        with open(path, "w") as f:
+            f.write("".join(f"{i}\n" for i in slots))
+        written.append((s.number, len(slots), path))
+    return written
+
+
+def tomo_summary(scans):
+    """Lines of text listing the tomography scans with det_exp_out statistics."""
+    tomo = [s for s in scans.values() if s.is_tomo]
+    lines = [f"{len(tomo)} tomography scans",
+             f"{'scan':>5} {'npts':>5} {'min':>8} {'mean':>8} {'max':>8}  {'retiga file':<16} command"]
+    for s in tomo:
+        d = s.data["det_exp_out"]
+        lines.append(f"{s.number:>5} {s.npoints:>5} {d.min():>8.4f} {d.mean():>8.4f} "
+                     f"{d.max():>8.4f}  {s.retiga_file.split('/')[-1]:<16} {s.command}")
+    return lines
+
+
+def write_det_exp_out_csv(scans, path):
+    """Write per-point det_exp_out for every tomo scan."""
+    with open(path, "w") as f:
+        f.write("scan,point,ome,det_exp_out\n")
         for s in (s for s in scans.values() if s.is_tomo):
-            stem = os.path.splitext(os.path.basename(s.retiga_file))[0] \
-                or f"scan_{s.number}"
-            slots = dropped_slots(s)
-            path = os.path.join(args.missing_slots_dir, f"{stem}_missing_slots.txt")
-            with open(path, "w") as f:
-                f.write("".join(f"{i}\n" for i in slots))
-            print(f"scan {s.number:>3}  {len(slots):>3} dropped  -> {path}")
-    elif args.tomo:
-        tomo = [s for s in scans.values() if s.is_tomo]
-        print(f"{len(tomo)} tomography scans")
-        print(f"{'scan':>5} {'npts':>5} {'min':>8} {'mean':>8} {'max':>8}  {'retiga file':<16} command")
-        for s in tomo:
-            d = s.data["det_exp_out"]
-            print(f"{s.number:>5} {s.npoints:>5} {d.min():>8.4f} {d.mean():>8.4f} "
-                  f"{d.max():>8.4f}  {s.retiga_file.split('/')[-1]:<16} {s.command}")
-        if args.csv:
-            with open(args.csv, "w") as f:
-                f.write("scan,point,ome,det_exp_out\n")
-                for s in tomo:
-                    for i, (o, d) in enumerate(zip(s.data["ome"], s.data["det_exp_out"])):
-                        f.write(f"{s.number},{i},{o:.6f},{d:.9g}\n")
-            print(f"wrote {args.csv}")
-    elif args.scan is None:
-        print(f"{len(scans)} scans in {args.logfile}")
-        print(f"{'scan':>5} {'npts':>6}  command")
-        for n, s in scans.items():
-            print(f"{n:>5} {s.npoints:>6}  {s.command}")
-    else:
-        s = scans[args.scan]
-        print(f"Scan {s.number}: {s.command}")
-        print(f"Date: {s.date}")
-        print(f"Tomo scan: {s.is_tomo}   Retiga file: {s.retiga_file or '-'}")
-        print(f"{s.npoints} points, {len(s.columns)} columns:")
-        print("  " + ", ".join(s.columns))
-        for c in s.comments:
-            print("  #C", c)
+            for i, (o, d) in enumerate(zip(s.data["ome"], s.data["det_exp_out"])):
+                f.write(f"{s.number},{i},{o:.6f},{d:.9g}\n")
 
 
-if __name__ == "__main__":
-    main()
+def scan_table(scans):
+    """Lines of text listing every scan."""
+    lines = [f"{'scan':>5} {'npts':>6}  command"]
+    lines += [f"{n:>5} {s.npoints:>6}  {s.command}" for n, s in scans.items()]
+    return lines
+
+
+def scan_details(scan):
+    """Lines of text describing one scan."""
+    lines = [f"Scan {scan.number}: {scan.command}",
+             f"Date: {scan.date}",
+             f"Tomo scan: {scan.is_tomo}   Retiga file: {scan.retiga_file or '-'}",
+             f"{scan.npoints} points, {len(scan.columns)} columns:",
+             "  " + ", ".join(scan.columns)]
+    lines += ["  #C " + c for c in scan.comments]
+    return lines

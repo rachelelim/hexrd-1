@@ -1,7 +1,5 @@
-#!/usr/bin/env python
-"""
-find_missing_frames.py - locate dropped frames in an areaDetector HDF5 stack
-and build the projection-angle list for tomographic reconstruction.
+"""Locate dropped frames in an areaDetector HDF5 stack and build the projection-angle list for
+tomographic reconstruction (``hexrd tomo missing-frames``).
 
 How it works
 ------------
@@ -14,29 +12,21 @@ trigger index ("slot").  Gaps in NDArrayUniqueId additionally show frames the
 camera produced but that were lost before reaching the file.
 
 Angles are then  theta = start_deg + deg_per_slot * slot  (or, with
---span-deg, the first-to-last span is forced to that many degrees).
+``span_deg``, the first-to-last span is forced to that many degrees).
 
 Limitations: triggers missed before the first or after the last retained
-frame are invisible to this method (compare the slot count with --expected
+frame are invisible to this method (compare the slot count with ``expected``
 and with a complete reference scan if that matters).
-
-Examples
---------
-  python find_missing_frames.py retiga_012547.h5
-  python find_missing_frames.py retiga_012547.h5 --expected 721 --deg-per-slot 0.25
-  python find_missing_frames.py scan.h5 --span-deg 180 --out-prefix results/scan23
-  python find_missing_frames.py scan.h5 --dataset /entry/data/data --attr-group /entry/instrument/NDAttributes
 
 Outputs (prefix defaults to the h5 path without extension)
   <prefix>_frame_angles.csv    frame_index, unique_id, timestamp_s, slot, missing_before, theta_deg
   <prefix>_theta_deg.npy       angle per retained frame, in stack order (feed to the reconstruction)
   <prefix>_missing_slots.txt   original trigger indices with no frame
-  <prefix>_gap_diagnostics.png unless --no-plot
-Exit status is 0 when no frames are missing, 1 when some are, 2 on error.
+  <prefix>_gap_diagnostics.png unless ``plot`` is False
 """
-import argparse
 import csv
-import sys
+import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 import h5py
@@ -46,6 +36,8 @@ try:
     import hdf5plugin  # noqa: F401  registers external compression filters if present
 except ImportError:
     pass
+
+logger = logging.getLogger(__name__)
 
 
 def read_metadata(h5path, dataset, attr_group):
@@ -91,86 +83,78 @@ def slots_from_timestamps(t, period=None, tol=0.35):
     return slot, period, dt
 
 
-def main(argv=None):
-    ap = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("h5file")
-    ap.add_argument("--dataset", default="/entry/data/data")
-    ap.add_argument("--attr-group", default="/entry/instrument/NDAttributes")
-    ap.add_argument("--expected", type=int, default=None,
-                    help="number of frames the scan should have produced")
-    ap.add_argument("--deg-per-slot", type=float, default=0.25,
-                    help="angular step per trigger (default 0.25)")
-    ap.add_argument("--span-deg", type=float, default=None,
-                    help="force first->last retained frame to span this many degrees "
-                         "(overrides --deg-per-slot)")
-    ap.add_argument("--start-deg", type=float, default=0.0,
-                    help="angle of the first retained frame (default 0)")
-    ap.add_argument("--period", type=float, default=None,
-                    help="trigger period in seconds (default: median frame interval)")
-    ap.add_argument("--tol", type=float, default=0.35,
-                    help="allowed deviation of interval/period from an integer (default 0.35)")
-    ap.add_argument("--out-prefix", default=None)
-    ap.add_argument("--no-plot", action="store_true")
-    args = ap.parse_args(argv)
+@dataclass
+class MissingFrames:
+    """What ``find_missing_frames`` found, and where it wrote it."""
+    slot: np.ndarray        # original trigger index of every retained frame
+    missing: np.ndarray     # trigger indices with no frame
+    theta: np.ndarray       # angle of every retained frame (deg)
+    report: list            # lines of text describing the result
+    written: list           # paths written
 
-    h5path = Path(args.h5file)
+    @property
+    def n_missing(self):
+        return len(self.missing)
+
+
+def find_missing_frames(h5file, dataset="/entry/data/data", attr_group="/entry/instrument/NDAttributes",
+                        expected=None, deg_per_slot=0.25, span_deg=None, start_deg=0.0, period=None,
+                        tol=0.35, out_prefix=None, plot=True):
+    """Find dropped frames in ``h5file`` and write the angle files described in the module docstring.
+
+    Raises FileNotFoundError, KeyError, RuntimeError or OSError if the file cannot be used. Finding
+    missing frames is a result (``MissingFrames.n_missing``), not an error.
+    """
+    h5path = Path(h5file)
     if not h5path.is_file():
-        print(f"ERROR: {h5path} not found", file=sys.stderr)
-        return 2
-    prefix = Path(args.out_prefix) if args.out_prefix else h5path.with_suffix("")
+        raise FileNotFoundError(f"{h5path} not found")
+    prefix = Path(out_prefix) if out_prefix else h5path.with_suffix("")
     prefix.parent.mkdir(parents=True, exist_ok=True)
 
-    try:
-        t, uid, nframes = read_metadata(h5path, args.dataset, args.attr_group)
-        slot, period, dt = slots_from_timestamps(t, args.period, args.tol)
-    except (KeyError, RuntimeError, OSError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 2
+    t, uid, nframes = read_metadata(h5path, dataset, attr_group)
+    slot, period, dt = slots_from_timestamps(t, period, tol)
 
     nslots = int(slot[-1]) + 1
     missing = np.setdiff1d(np.arange(nslots), slot)
     gap_sizes = np.diff(slot) - 1
     multi = np.flatnonzero(gap_sizes > 1)
 
-    if args.span_deg is not None:
-        deg_per_slot = args.span_deg / slot[-1] if slot[-1] else 0.0
-    else:
-        deg_per_slot = args.deg_per_slot
-    theta = args.start_deg + deg_per_slot * slot
+    if span_deg is not None:
+        deg_per_slot = span_deg / slot[-1] if slot[-1] else 0.0
+    theta = start_deg + deg_per_slot * slot
 
-    print(f"file: {h5path}")
-    print(f"frames in file: {nframes}")
-    print(f"trigger slots spanned (first to last frame): {nslots}")
-    print(f"missing frames inside that span: {len(missing)}"
-          + (f" ({len(multi)} gaps of more than one frame)" if len(multi) else ""))
-    if args.expected is not None:
-        print(f"expected frames: {args.expected}; frames + detected gaps = {nframes + len(missing)}")
-        extra = nslots - args.expected
+    report = [f"file: {h5path}",
+              f"frames in file: {nframes}",
+              f"trigger slots spanned (first to last frame): {nslots}",
+              f"missing frames inside that span: {len(missing)}"
+              + (f" ({len(multi)} gaps of more than one frame)" if len(multi) else "")]
+    if expected is not None:
+        report.append(f"expected frames: {expected}; frames + detected gaps = {nframes + len(missing)}")
+        extra = nslots - expected
         if extra > 0:
-            print(f"  NOTE: {extra} more trigger slots than expected; the scan issued extra "
-                  "triggers, or the expected count is off")
+            report.append(f"  NOTE: {extra} more trigger slots than expected; the scan issued extra "
+                          "triggers, or the expected count is off")
         elif extra < 0:
-            print(f"  NOTE: {-extra} fewer slots than expected; triggers were probably missed "
-                  "before the first or after the last retained frame (undetectable here)")
+            report.append(f"  NOTE: {-extra} fewer slots than expected; triggers were probably missed "
+                          "before the first or after the last retained frame (undetectable here)")
     if uid is not None:
         uid_gaps = np.flatnonzero(np.diff(uid) != 1)
         if len(uid_gaps):
-            print(f"NDArrayUniqueId has {len(uid_gaps)} jumps: frames were lost AFTER the "
-                  f"camera driver (after retained frames {uid_gaps.tolist()[:20]})")
+            report.append(f"NDArrayUniqueId has {len(uid_gaps)} jumps: frames were lost AFTER the "
+                          f"camera driver (after retained frames {uid_gaps.tolist()[:20]})")
         elif len(missing):
-            print("NDArrayUniqueId contiguous: the camera never produced the missing frames "
-                  "(missed triggers)")
+            report.append("NDArrayUniqueId contiguous: the camera never produced the missing frames "
+                          "(missed triggers)")
         else:
-            print("NDArrayUniqueId contiguous")
-    print(f"trigger period: {period:.4f} s; first-to-last span: {t[-1]-t[0]:.3f} s")
-    print(f"angle: {args.start_deg:g} + {deg_per_slot:.5f} deg * slot  ->  "
-          f"{theta[0]:.3f} to {theta[-1]:.3f} deg")
+            report.append("NDArrayUniqueId contiguous")
+    report.append(f"trigger period: {period:.4f} s; first-to-last span: {t[-1]-t[0]:.3f} s")
+    report.append(f"angle: {start_deg:g} + {deg_per_slot:.5f} deg * slot  ->  "
+                  f"{theta[0]:.3f} to {theta[-1]:.3f} deg")
     if len(missing):
-        print("missing trigger slots (0-based):")
-        print("  " + ", ".join(map(str, missing.tolist())))
-        print("retained frame index immediately before each gap:")
-        print("  " + ", ".join(str(int(np.flatnonzero(slot < m)[-1])) for m in missing))
+        report.append("missing trigger slots (0-based):")
+        report.append("  " + ", ".join(map(str, missing.tolist())))
+        report.append("retained frame index immediately before each gap:")
+        report.append("  " + ", ".join(str(int(np.flatnonzero(slot < m)[-1])) for m in missing))
 
     csv_path = prefix.parent / f"{prefix.name}_frame_angles.csv"
     with open(csv_path, "w", newline="") as fh:
@@ -184,7 +168,7 @@ def main(argv=None):
     np.savetxt(prefix.parent / f"{prefix.name}_missing_slots.txt", missing, fmt="%d")
     written = [csv_path.name, f"{prefix.name}_theta_deg.npy", f"{prefix.name}_missing_slots.txt"]
 
-    if not args.no_plot:
+    if plot:
         try:
             import matplotlib
             matplotlib.use("Agg")
@@ -201,12 +185,9 @@ def main(argv=None):
             ax[1].set_xlabel("retained frame index")
             fig.tight_layout()
             fig.savefig(prefix.parent / f"{prefix.name}_gap_diagnostics.png", dpi=120)
+            plt.close(fig)
             written.append(f"{prefix.name}_gap_diagnostics.png")
         except ImportError:
-            print("matplotlib not available, skipping plot")
-    print("wrote: " + ", ".join(written) + f"  (in {prefix.parent})")
-    return 1 if len(missing) else 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+            report.append("matplotlib not available, skipping plot")
+    report.append("wrote: " + ", ".join(written) + f"  (in {prefix.parent})")
+    return MissingFrames(slot=slot, missing=missing, theta=theta, report=report, written=written)

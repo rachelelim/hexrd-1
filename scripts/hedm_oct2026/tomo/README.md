@@ -8,7 +8,8 @@ and the default settings are tuned for that kind of sample; see
 [Assumptions and limitations](#assumptions-and-limitations) before applying
 it to something different.
 
-One command runs the whole chain for a scan:
+It runs from the command line, like `hexrd find-orientations` and `hexrd fit-grains`:
+`hexrd tomo <step>`. One command runs the whole chain for a scan:
 
 ```
 spec.log + dark/bright/tomo .h5  -->  per-layer reconstruction  -->  mask (70 layers x 150 x 150)
@@ -16,81 +17,102 @@ spec.log + dark/bright/tomo .h5  -->  per-layer reconstruction  -->  mask (70 la
                                                                       -->  smooth  -->  mask + sdf
 ```
 
-## Contents of this folder
+## The steps
 
-| File | Role |
+| Command | What it does |
 |---|---|
-| `run_tomo_pipeline.py` | **Driver.** Runs all stages for one spec scan. Start here. |
-| `process_tomo_clean.py` | Reconstruction (FBP per layer), thresholding, powder removal, rebinning to the voxel grid. |
-| `hexrd/hedm/grainmap/tomoutil.py` | Library for the above (in hexrd, not this folder): streaming loader, attenuation, FBP, cleaning, rebinning. |
-| `find_missing_frames.py` | Finds dropped frames from the h5 timestamps and writes the missing-slots file. |
-| `parse_spec.py` | Reads `spec.log`: scans, commands, columns (`ome`, `det_exp_out`, ...), comments. Also usable as a CLI. |
-| `interp_layers.py` | Fills bad layers by cubic interpolation of signed-distance maps. |
-| `smooth_masks.py` | Smooths a mask by filtering its signed-distance field in 3D. |
-| `tomo_config.yml` | Template config; the driver rewrites the filenames, `v_bnds`, `num_images` and `analysis_name` per scan. |
+| `hexrd tomo pipeline <yml>` | **Start here.** Runs all stages for one spec scan (setup, missing, recon, qc, interp, smooth). |
+| `hexrd tomo reconstruct <yml>` | Reconstruction (FBP per layer), thresholding, powder removal, rebinning to the voxel grid. |
+| `hexrd tomo missing-frames <h5>` | Finds dropped frames from the h5 timestamps and writes the angles and the missing-slots file. |
+| `hexrd tomo spec <spec.log> [scan]` | Reads `spec.log`: scans, commands, columns (`ome`, `det_exp_out`, ...), comments. |
+| `hexrd tomo interpolate <mask> <out> <ranges>` | Fills bad layers by cubic interpolation of signed-distance maps. |
+| `hexrd tomo smooth <mask> <out> <sigma>` | Smooths a mask by filtering its signed-distance field in 3D. |
+
+`hexrd tomo <step> -h` lists the options of a step. The code is in `hexrd/hedm/grainmap`:
+`tomo_pipeline.py`, `tomo_reconstruct.py` (and the library `tomoutil.py`: streaming loader, attenuation,
+FBP, cleaning, rebinning), `tomo_frames.py`, `tomo_spec.py`, `tomo_masks.py`, and the command line in
+`hexrd/hedm/cli/tomo.py`. `tomo_config.yml` in this folder is a template config.
 
 ## Requirements
 
-Use the `hexrdgui_pr_Oct2026` conda environment (hexrd with `hexrd.hedm.nf_config`).
-The scripts also need `h5py`, `hdf5plugin`, `numpy`, `scipy`, `scikit-image`, `PyYAML`, `matplotlib`.
+An environment with hexrd installed (the `hexrdgui_pr_Oct2026` conda environment has it). hexrd needs `h5py`,
+`hdf5plugin`, `numpy`, `scipy`, `scikit-image`, `PyYAML` and `matplotlib`, so nothing else is required.
 
 `hdf5plugin` is required: the Retiga files use the HDF5 LZ4 filter (id 32004), and without it
 reading fails with `OSError: Can't synchronously read data (can't open directory .../hdf5/plugin)`.
 `pip install hdf5plugin` fixes it.
 
-`process_tomo_clean.py` uses `hexrd.hedm.grainmap.nfutil` and `hexrd.hedm.grainmap.tomoutil`, so hexrd must be
-installed in the environment. The scripts can be run from any folder, but `run_tomo_pipeline.py` expects
-`process_tomo_clean.py`, `find_missing_frames.py` and `tomo_config.yml` together in its template folder.
+## The config file
+
+The scan is described by an nf_config yml, as for the NF steps (`tomo_config.yml` here is a template).
+What the commands read:
+
+| Key | Used by |
+|---|---|
+| `analysis_name`, `output_directory` | output names and folder |
+| `input_files: detector_file` | pixel size, rotation-axis offset, number of rows |
+| `tomography: spec: {log, scan, tomo_dir}` | the spec log and the tomography scan in it; `tomo_dir` is the folder with the `retiga_*.h5` files (pipeline) |
+| `tomography: bright/dark/tomo_images: filename` | the three h5 files. `reconstruct` needs them. In `pipeline` they are found from the spec log; set `bright` or `dark` to override one |
+| `tomography: missing_slots`, `theta_file`, `deg_per_frame` | optional: dropped-frame file, an angle file (.npy), the angular step |
+| `tomography: ome_start, ome_end` | angle range if the spec log is not used |
+| `tomography: reconstruction:` | `voxel_spacing`, `v_bnds`, the x/z grid |
+| `tomography: processing:` | `recon_thresh`, `noise_obj_size`, `min_hole_size`, `erosion_iter`, `dilation_iter` |
+| `multiprocessing: num_cpus` | worker processes (`all`, `half`, a number) |
+
+Values that control a run (`--layer-index`, `--powder-open-um`, `--stages`, ...) are command-line options. Where
+an option and the yml both give a value, the option wins: for example `--spec-log` and `--spec-scan` replace
+`tomography: spec`, and `--processes` replaces `multiprocessing: num_cpus`.
 
 ## Inputs
 
-1. **`spec.log`** for the beamtime. For tomography scan `N` the driver expects
+1. **`spec.log`** for the beamtime. For tomography scan `N` the pipeline expects
    - scan `N`: the tomo scan, `flyscan ome 0 180 720 <exposure>`, preceded in the log by the note
      "doing the tomography scan";
    - scan `N-2`: dark field and scan `N-1`: bright field (both `flyscan ome 0 10 20 <exposure>`, 21 frames).
    Each scan's `Retiga #0 saved last image to .../retiga_XXXXXX.h5` line gives its image file.
-   The driver warns if the retiga numbers are not consecutive or the dark looks brighter than the bright;
-   override with `--dark` / `--bright`.
-2. **The three `retiga_*.h5` files**, all in one folder (`--tomo-dir`). Dataset `entry/data/data`,
+   The pipeline warns if the retiga numbers are not consecutive and stops if the dark looks brighter than
+   the bright; set `tomography: dark: filename` or `bright: filename` to use other files.
+2. **The three `retiga_*.h5` files**, all in one folder (`tomography: spec: tomo_dir`). Dataset `entry/data/data`,
    one frame per chunk, with `NDAttributes` timestamps.
 3. **A detector yml** (`retiga_e7.yml`): pixel size (0.9 um here) and the rotation-axis column offset
    (`tvec[0]`, 0 here).
 
 ## Quick start
 
-Run with the `hexrdgui_pr_Oct2026` Python. Paths below are examples.
+Paths below are examples. Copy `tomo_config.yml`, set `tomography: spec:` (`log`, `scan`, `tomo_dir`),
+`input_files: detector_file`, `analysis_name` and the grid, and leave the three `filename` lines out.
 
 ```bash
 # 1. set up, find dropped frames, reconstruct all 70 layers, write the quality report  (~13 min, ~4 GB RAM)
-python run_tomo_pipeline.py 236 --spec /path/spec.log --detector /path/retiga_e7.yml \
-    --tomo-dir /path/tomo --stages setup,missing,recon,qc
+hexrd tomo pipeline scan236.yml --stages setup,missing,recon,qc
 
 # 2. look at <run-dir>/<name>_quality.png and the printed suggestions, then
 #    interpolate the bad layer ranges and smooth
-python run_tomo_pipeline.py 236 --spec /path/spec.log --detector /path/retiga_e7.yml \
-    --tomo-dir /path/tomo --interp 15-17,28-31,63 --stages interp,smooth
+hexrd tomo pipeline scan236.yml --interp 15-17,28-31,63 --stages interp,smooth
 ```
 
-`--dry-run` prints the commands without running them. A stage is skipped if its output exists;
-add `--force` to redo it. Everything is written to `--run-dir` (default `<tomo-dir>/run_scan<N>`).
-`--layers 52` reconstructs a single layer (`qc` and `interp` need all 70 and are skipped).
+`--dry-run` checks the inputs and shows what would run. A stage is skipped if its output exists;
+add `--force` to redo it. Everything is written to `--run-dir` (default `<tomo_dir>/run_scan<N>`), including the
+run's complete config, `tomo_config.yml`, with the h5 files found from the spec log filled in.
+`--layers 52` reconstructs a single layer (`qc` and `interp` need all 70 and are skipped). `--scan 23` replaces
+the scan in the yml, so one yml can serve several scans.
 
 ## Stages
 
 | Stage | What it does | Output (in the run dir) |
 |---|---|---|
 | `setup` | Finds dark/bright/tomo files from `spec.log`, checks dark < bright, writes the config. | `tomo_config.yml` |
-| `missing` | Runs `find_missing_frames.py` on the tomo h5. Falls back to `det_exp_out` from `spec.log` if that fails. | `<retiga>_missing_slots.txt` (+ `_frame_angles.csv`, `_theta_deg.npy`) |
-| `recon` | Runs `process_tomo_clean.py` (details below). | `<name>_tomo_mask.npz`, `recon.log` |
+| `missing` | Finds dropped frames as `hexrd tomo missing-frames` does. Falls back to `det_exp_out` from `spec.log` if that fails. | `<retiga>_missing_slots.txt` (+ `_frame_angles.csv`, `_theta_deg.npy`), `find_missing.log` |
+| `recon` | Runs the reconstruction (details below). | `<name>_tomo_mask.npz`, `recon.log` |
 | `qc` | Per-layer fill, layer-to-layer change, bright-field clipping; flags suspect layers. | `<name>_quality.png`, `<name>_suspect_layers.json` |
 | `interp` | Interpolates the ranges given by `--interp` (2 supporting layers each side). | `<name>_tomo_mask_interp.npz` |
 | `smooth` | Smooths the interpolated (or original) mask; `--smooth-sigma 0` skips it. | `..._smooth.npz` |
 
-`<name>` is `--analysis` (default `diamond-1a_scan<N>`).
+`<name>` is `analysis_name` of the yml (default `tomo_scan<N>`).
 
 ## What the reconstruction does
 
-For each requested layer (a detector row), `process_tomo_clean.py`:
+For each requested layer (a detector row), `hexrd tomo reconstruct`:
 
 1. **Loads only the detector rows it needs**, streamed frame by frame: the band covering the layers plus a
    16-row margin (`--row-margin`; the Gaussian filter reaches 8 rows, so 16 is exact). Dark and bright are
@@ -127,10 +149,10 @@ For each requested layer (a detector row), `process_tomo_clean.py`:
   toward smaller row numbers). `--vert-beam-center` is that `beam_center`, in mm. Under the convention above it equals
   the Y of the detector center: the height of the detector center above the sample origin, positive when the
   detector center is above the beam, which moves the layers down the image. The default (omitted
-  `--vert-beam-center`) uses `translation[1]` of the detector file.
+  `--vert-beam-center`) uses `translation[1]` of the detector file in `reconstruct`.
 - **For scans 23 and 236 the detector file's 0.974 mm does not describe the tomography geometry**: with it, the
   layers land near row 2158, outside the beam, and the mask is speckle. The beam is at the detector center,
-  so the driver passes `--vert-beam-center 0`. Check this for each new beamtime or sample height.
+  so the pipeline passes `--vert-beam-center 0` (its default). Check this for each new beamtime or sample height.
 - The rotation axis is at column `ncols/2 - translation[0]/pixel` (derived from the code and the +X-right
   convention, not tested with a non-zero offset). It is 0 for `retiga_e7.yml`.
 - The mask grid is 150 x 150 voxels covering 1.5 mm (X and Z from -0.75 to +0.74 mm).
@@ -188,37 +210,40 @@ A binary mask on a grid keeps a staircase on diagonal edges. For a smooth surfac
 (e.g. `skimage.measure.marching_cubes(sdf_smooth, 0)`); it gives about 77,000 vertices for these masks.
 Watertightness of the meshes has not been checked.
 
-## Using the scripts individually
+## Using the steps individually
 
 ```bash
 # list tomo scans and det_exp_out statistics from spec.log; dropped-frame files for all of them
-python parse_spec.py spec.log --tomo [--csv det_exp_out.csv]
-python parse_spec.py spec.log --missing-slots-dir missing_slots
+hexrd tomo spec spec.log --tomo [--csv det_exp_out.csv]
+hexrd tomo spec spec.log --missing-slots-dir missing_slots
 
-# dropped frames from the h5 (exit status 1 just means "frames are missing")
-python find_missing_frames.py retiga_012547.h5 --expected 721 --deg-per-slot 0.249788 --out-prefix out/retiga_012547
+# dropped frames from the h5 (finding frames missing is not an error; a file that cannot be used exits with 2)
+hexrd tomo missing-frames retiga_012547.h5 --expected 721 --deg-per-slot 0.249788 --out-prefix out/retiga_012547
 
-# reconstruction only (run from the run folder; config must point at the h5 files)
-python /path/to/process_tomo_clean.py tomo_config.yml --spec-log spec.log --spec-scan 23 \
+# reconstruction only (the yml points at the h5 files and the detector)
+hexrd tomo reconstruct tomo_config.yml --spec-log spec.log --spec-scan 23 \
     --missing-slots retiga_012547_missing_slots.txt --max-angle 180 --vert-beam-center 0 \
     --all-layers --powder-open-um 40 --processes 8
 #   one layer: --layer-index 52      a list: --layer-indices 3 10 17      keep the raw FBP: --save-fbp
 
-python interp_layers.py mask.npz out.npz 31 34 29 30 35 36     # layers 31-34 from 29, 30, 35, 36
-python smooth_masks.py in.npz out_smooth.npz 1.5
+hexrd tomo interpolate mask.npz out.npz 31-34 --support 29 30 35 36     # layers 31-34 from 29, 30, 35, 36
+hexrd tomo smooth in.npz out_smooth.npz 1.5
 ```
+
+`hexrd tomo reconstruct` writes its log to `<output_directory>/<analysis_name>_tomo.log` and, unlike the old
+`process_tomo_clean.py`, to the console through the `hexrd` logger (`-q` for errors only, `--debug` for more).
 
 ## Parameters
 
 | Option | Default | Notes |
 |---|---|---|
-| `--powder-open-um` | 40 in the driver (0 = off in `process_tomo_clean.py`) | Walls here are 100s of um thick; a 40 um opening cost about 4% of clean-layer area, 2.75% with restoration. |
+| `--powder-open-um` | 40 in `pipeline` (0 = off in `reconstruct`) | Walls here are 100s of um thick; a 40 um opening cost about 4% of clean-layer area, 2.75% with restoration. |
 | `--powder-restore-um` | 10 | At 20 um or more, powder starts coming back. |
 | `--powder-min-object-um2` | 20000 | Removes all isolated powder in the test layers; any value from 10000 up worked. |
 | `--powder-fill-holes-um2` | 5000 | 5000 and 20000 gave nearly identical results. |
 | `--smooth-sigma` | 1.5 | voxels |
-| `--vbnds` | -0.35 0.35 | mm; matches the 700 um beam height. |
-| `recon_thresh` (config) | 0.0002 | The code applies `* 2`. The FBP histogram of this sample has two peaks (background ~0, material ~0.0008) and 0.0004 sits at the minimum between them. |
+| `tomography: reconstruction: v_bnds` | -0.35, 0.35 in `pipeline` | mm; matches the 700 um beam height. |
+| `recon_thresh` (yml) | 0.0002 | The code applies `* 2`. The FBP histogram of this sample has two peaks (background ~0, material ~0.0008) and 0.0004 sits at the minimum between them. |
 
 ## Assumptions and limitations
 
@@ -236,7 +261,7 @@ python smooth_masks.py in.npz out_smooth.npz 1.5
 - **Powder:** the powder settings treat loose or packed powder as void. This was a deliberate choice for a
   micromechanical simulation. For a sample where such material should count, run without `--powder-open-um`.
   Parameters were tuned on a lattice with thick walls; thin struts below about 80 um would be damaged by a 40 um opening.
-- **Detector assumptions** in `qc`: 12-bit ceiling (4095), pixel size 0.0009 mm (`--pixel-mm`), beam columns 400 to 2800,
+- **Detector assumptions** in `qc`: 12-bit ceiling (4095), pixel size from the detector file (`--pixel-mm` overrides), beam columns 400 to 2800,
   rows 600 to 1600. Change them for a different detector or setup.
 - **Spec log format:** the pulse start/step comments and the "doing the tomography scan" note come from this beamline's spec macros.
 - **Dropped frames:** the missing-slots file lists trigger slots that never produced a frame, found by
@@ -250,8 +275,9 @@ python smooth_masks.py in.npz out_smooth.npz 1.5
 | Symptom | Cause / fix |
 |---|---|
 | `OSError: ... can't open directory .../hdf5/plugin` | Install `hdf5plugin` in the environment. |
-| `ModuleNotFoundError: hexrd.hedm.grainmap` | hexrd is not installed in this environment (or is an older version without `grainmap.nfutil` as a package). |
-| "dark and bright look swapped" | Check which scans are dark/bright; pass `--dark` / `--bright`. |
+| `hexrd: error: ... tomo` or `ModuleNotFoundError: hexrd.hedm.grainmap` | hexrd is not installed in this environment, or is a version without `hexrd tomo`. |
+| `tomography: spec ...` error from `pipeline` | Set `tomography: spec: {log, scan}` in the yml, or give `--scan`. |
+| "dark and bright look swapped" | Check which scans are dark/bright; set `tomography: dark: filename` / `bright: filename`. |
 | Broken or C-shaped rings in some layers | Bright-field clipping at 4095; see Quality control. |
 | Mask is mostly speckle | The layer rows are outside the beam: check `--vert-beam-center` and `v_bnds` against a radiograph. |
 | Reconstruction needs far too much memory | Use the streaming path (h5 only); TIFF stacks still load in full. |
@@ -262,4 +288,15 @@ python smooth_masks.py in.npz out_smooth.npz 1.5
 - Scan 236: same sample after vertical compression, exposure 0.25 s, no dropped frames. Layers 15 to 17, 28 to 31 and 63 were interpolated.
 - Both: powder open 40 um / restore 10 um, smoothing 1.5 voxels, `v_bnds` -0.35 to 0.35 mm.
 
-The driver was checked against hand-run versions of every stage; the results were identical.
+The pipeline was checked against hand-run versions of every stage; the results were identical. The code was later moved from
+standalone scripts into hexrd (`hexrd tomo`). Two checks of that move:
+
+- On identical synthetic scans (a disk with dropped frames, spec angles, powder removal, chosen layers, interpolation and
+  smoothing), the old scripts and the new code gave bit-identical masks and angle files. The tests in `tests/test_tomo_*.py`
+  use such synthetic data.
+- On scan 23 (layers 20 and 52, spec angles, the existing missing-slots file, 40 um powder removal, raw FBP saved), the old
+  `process_tomo_clean.py` and `hexrd tomo reconstruct` gave identical masks and identical FBP arrays, and
+  `hexrd tomo pipeline` gave the same layer-20 mask and the same 28 missing slots as the old pipeline and as the existing
+  `retiga_012547_missing_slots.txt`. Those layers are also identical to layers 20 and 52 of the earlier 70-layer mask
+  `diamond-1a_S0_L1b_tomo_mask.npz`. The interpolation and smoothing steps were checked on synthetic data only, and scan 236
+  was not rerun.

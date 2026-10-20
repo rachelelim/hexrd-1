@@ -1,44 +1,52 @@
-# %% Necessary Dependencies
-import argparse
+"""Reconstruct a tomography mask from a flyscan (``hexrd tomo reconstruct``).
+
+Reads an nf_config yml and the detector file, builds the flat-field-corrected filtered radiograph
+stack, runs filtered back-projection per layer in a worker pool, then thresholds, cleans and rebins
+each layer to the voxel grid. ``reconstruct`` writes ``<output_directory>/<analysis_name>_tomo_mask.npz``
+(``_layer<N>`` or ``_<n>layers`` is added when layers are selected) with the keys ``mask`` (bool,
+layers by Ny by Nx), ``Xs``, ``Ys``, ``Zs``, ``voxel_spacing``, ``layer_indices`` and ``v_mm``.
+
+Values that describe the scan (spec log and scan, missing-slots file, angle file, degrees per frame)
+come from the ``tomography`` section of the yml and are overridden by the same-named
+``ReconstructOptions`` fields (the command-line flags). The number of processes defaults to
+``multiprocessing: num_cpus`` of the yml.
+
+The pool functions ``init_reconstruct_worker`` and ``reconstruct_mask_for_layer`` and the global
+``_WORKER_CONFIG`` are at module level so that worker processes can import them.
+"""
+import gc
 import logging
+import multiprocessing as mp
 import os
 import re
-import sys
-import gc
-import multiprocessing as mp
+from dataclasses import replace
 
 import numpy as np
 import yaml
 
-from hexrd.hedm import nf_config
+from hexrd import instrument
 from hexrd.hedm.grainmap import nfutil
 from hexrd.hedm.grainmap import tomoutil
-
-from hexrd import instrument
-
-
-try:
-    import matplotlib.pyplot as plt
-    matplot = True
-except ImportError:
-    logging.warning('no matplotlib, debug plotting disabled')
-    matplot = False
-
-
-# logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[
-        logging.FileHandler("tomo_processing.log", mode="a"),
-        logging.StreamHandler(),
-    ],
-)
+from hexrd.hedm.grainmap.tomo_options import ReconstructOptions  # noqa: F401  (re-exported)
 
 logger = logging.getLogger(__name__)
 _WORKER_CONFIG = None
+
+
+def resolve_options(cfg, options=None):
+    """Options with the unset scan description and process count filled in from the yml."""
+    opts = replace(options) if options is not None else ReconstructOptions()
+    tomo = cfg.tomography
+    if opts.spec_log is None and opts.spec_scan is None:
+        opts.spec_log, opts.spec_scan = tomo.spec.log, tomo.spec.scan
+    for name in ('missing_slots', 'theta_file', 'deg_per_frame'):
+        if getattr(opts, name) is None:
+            setattr(opts, name, getattr(tomo, name))
+    if (opts.spec_log is None) != (opts.spec_scan is None):
+        raise ValueError('the spec log and the spec scan must be given together')
+    if opts.processes is None:
+        opts.processes = cfg.multiprocessing.num_cpus
+    return opts
 
 
 def create_memmap_array(arr, path):
@@ -113,154 +121,6 @@ def reconstruct_mask_for_layer(task):
     return ii, tomo_mask, fbp
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description='Generate tomography mask')
-    parser.add_argument(
-        'input_file',
-        nargs='?',
-        default='tomo_config.yml',
-        help='Input config file'
-    )
-    parser.add_argument(
-        '--processes',
-        type=int,
-        default=None,
-        help='Number of worker processes'
-    )
-    parser.add_argument(
-        '--theta-file',
-        default=None,
-        help='.npy file with one projection angle (deg) per frame in the '
-             'stack; overrides angles derived from the HDF5 timestamps'
-    )
-    parser.add_argument(
-        '--missing-slots',
-        default=None,
-        help='Text file with the 0-based trigger slots that have no frame, '
-             'one per line (the <prefix>_missing_slots.txt written by '
-             'find_missing_frames.py). Angles are rebuilt from the slot '
-             'numbers; an empty file means no dropped frames. Used instead '
-             'of the HDF5 timestamps, so it also works for TIFF stacks. '
-             '--theta-file takes priority if both are given'
-    )
-    parser.add_argument(
-        '--spec-log',
-        default=None,
-        help='spec.log to read the angular step and start angle from (the '
-             '"rams pulse start/step" comments of --spec-scan). Requires '
-             '--spec-scan'
-    )
-    parser.add_argument(
-        '--spec-scan',
-        type=int,
-        default=None,
-        help='Scan number in --spec-log for the tomography scan'
-    )
-    parser.add_argument(
-        '--deg-per-frame',
-        type=float,
-        default=None,
-        help='Angular step per detector trigger (deg). Overrides the '
-             'spec/config value. Default: the spec "rams pulse step" if '
-             '--spec-log is given, else (ome_end - ome_start) / '
-             '(num_imgs - 1) from the config'
-    )
-    parser.add_argument(
-        '--layer-index',
-        type=int,
-        default=None,
-        help='Reconstruct only this layer (0-based, bottom of v_bnds up). '
-             'Default: the middle layer'
-    )
-    parser.add_argument(
-        '--layer-indices',
-        type=int,
-        nargs='+',
-        default=None,
-        help='Reconstruct exactly these layers (0-based), e.g. an evenly '
-             'spaced set. Overrides --layer-index'
-    )
-    parser.add_argument(
-        '--save-fbp',
-        action='store_true',
-        help='Also save each layer\'s unthresholded reconstruction as '
-             '<analysis>_fbp_layer<N>.npy'
-    )
-    parser.add_argument(
-        '--all-layers',
-        action='store_true',
-        help='Reconstruct every layer in v_bnds instead of a single layer'
-    )
-    parser.add_argument(
-        '--vert-beam-center',
-        type=float,
-        default=None,
-        help='Vertical beam position on the detector (mm), replacing the '
-             'detector file translation[1]. It is the height (lab +Y, up) of '
-             'the detector center above the beam: positive moves the layers '
-             'down the image (toward larger row numbers). 0 puts the beam at '
-             'the center row'
-    )
-    parser.add_argument(
-        '--cross-sectional-dim',
-        type=float,
-        default=None,
-        help='Diameter (mm) of the circle reconstructed from each sinogram. '
-             'Default: the smallest circle containing the x/z grid '
-             '(x_length, z_length, x_center, z_center)'
-    )
-    parser.add_argument(
-        '--powder-open-um',
-        type=float,
-        default=0.0,
-        help='Powder removal: radius (um) of the opening applied to the '
-             'full-resolution binary before rebinning; deletes features '
-             'narrower than twice this. 0 (default) = off. 40 is a good '
-             'start for this lattice (walls are hundreds of um thick)'
-    )
-    parser.add_argument(
-        '--powder-restore-um',
-        type=float,
-        default=10.0,
-        help='With --powder-open-um: keep original pixels within this '
-             'distance (um) of the opened shape, restoring the true wall edge '
-             '(0 = no restoration)'
-    )
-    parser.add_argument(
-        '--powder-min-object-um2',
-        type=float,
-        default=20000.0,
-        help='With --powder-open-um: remove isolated objects smaller than '
-             'this (um^2); replaces the config noise_obj_size'
-    )
-    parser.add_argument(
-        '--powder-fill-holes-um2',
-        type=float,
-        default=5000.0,
-        help='With --powder-open-um: fill holes smaller than this (um^2); '
-             'replaces the config min_hole_size'
-    )
-    parser.add_argument(
-        '--row-margin',
-        type=int,
-        default=16,
-        help='h5 stacks: load only the detector rows needed for the '
-             'reconstructed layers plus this many rows on each side (the '
-             'Gaussian filter reaches 8 rows, so 16 is exact)'
-    )
-    parser.add_argument(
-        '--max-angle',
-        type=float,
-        default=None,
-        help='Drop frames whose angle exceeds this value (deg), e.g. 180 '
-             'to discard redundant frames when the scan overran'
-    )
-    args = parser.parse_args()
-    if (args.spec_log is None) != (args.spec_scan is None):
-        parser.error('--spec-log and --spec-scan must be given together')
-    return args
-
-
 def load_missing_slots(path):
     """Read trigger slot indices (one per line) from a missing_slots file."""
     with open(path) as f:
@@ -303,37 +163,37 @@ def read_spec_angles(log_path, scan):
     return found['start'] + found['step'] / 2.0, found['step']
 
 
-def angle_params(tomo, start_ang, end_ang, args):
+def angle_params(tomo, start_ang, end_ang, opts):
     """(start_deg, step_deg) of slot 0 and per trigger.
 
-    Priority: spec comments (--spec-log), else the config ome range with
-    step (end - start) / (num_imgs - 1). --deg-per-frame overrides the step.
+    Priority: spec comments (spec log), else the config ome range with
+    step (end - start) / (num_imgs - 1). deg_per_frame overrides the step.
     """
-    if args.spec_log is not None:
-        start_ang, step = read_spec_angles(args.spec_log, args.spec_scan)
+    if opts.spec_log is not None:
+        start_ang, step = read_spec_angles(opts.spec_log, opts.spec_scan)
         logger.info(
-            f'Scan {args.spec_scan} from {args.spec_log}: first frame at '
+            f'Scan {opts.spec_scan} from {opts.spec_log}: first frame at '
             f'{start_ang:.4f} deg, {step:.6f} deg per trigger')
     else:
         step = None
-    if args.deg_per_frame is not None:
-        step = args.deg_per_frame
+    if opts.deg_per_frame is not None:
+        step = opts.deg_per_frame
     if step is None:
         try:
             num_imgs = tomo.tomo_images.num_imgs
         except AttributeError:
             raise ValueError(
-                'Cannot determine the angular step: give --spec-log, '
-                '--deg-per-frame, or set tomography.tomo_images.num_imgs in '
+                'Cannot determine the angular step: give a spec log and scan, '
+                'deg_per_frame, or set tomography.tomo_images.num_images in '
                 'the config')
         step = (end_ang - start_ang) / (num_imgs - 1)
     return start_ang, step
 
 
-def derive_theta(tomo, ome_range_deg, args, num_frames):
+def derive_theta(tomo, ome_range_deg, opts, num_frames):
     """Projection angle per retained frame.
 
-    Priority: --theta-file, then --missing-slots, then HDF5 trigger
+    Priority: theta_file, then missing_slots, then HDF5 trigger
     timestamps (handles dropped frames), then None (tomo_reconstruct_layer
     falls back to a uniform spread over the omega range, which is only right
     if no frame is missing).
@@ -341,29 +201,29 @@ def derive_theta(tomo, ome_range_deg, args, num_frames):
     start_ang = ome_range_deg[0][0]
     end_ang = ome_range_deg[0][1]
 
-    if args.theta_file is not None:
-        theta = np.load(args.theta_file).astype(np.float64)
+    if opts.theta_file is not None:
+        theta = np.load(opts.theta_file).astype(np.float64)
         if theta.shape != (num_frames,):
             raise ValueError(
-                f'{args.theta_file} has {theta.size} angles but the stack '
+                f'{opts.theta_file} has {theta.size} angles but the stack '
                 f'has {num_frames} frames')
-        logger.info(f'Using angles from {args.theta_file}')
+        logger.info(f'Using angles from {opts.theta_file}')
         return theta
 
-    if args.missing_slots is not None:
-        missing = load_missing_slots(args.missing_slots)
-        start_ang, step = angle_params(tomo, start_ang, end_ang, args)
+    if opts.missing_slots is not None:
+        missing = load_missing_slots(opts.missing_slots)
+        start_ang, step = angle_params(tomo, start_ang, end_ang, opts)
         # The stack holds every trigger slot except the missing ones
         nslots = num_frames + len(missing)
         if len(missing) and missing[-1] >= nslots:
             raise ValueError(
-                f'{args.missing_slots}: slot {missing[-1]} is outside the '
+                f'{opts.missing_slots}: slot {missing[-1]} is outside the '
                 f'{nslots} trigger slots implied by {num_frames} frames + '
                 f'{len(missing)} missing')
         slot = np.setdiff1d(np.arange(nslots), missing)
         theta = start_ang + step * slot
         logger.info(
-            f'{len(missing)} dropped frames from {args.missing_slots}; '
+            f'{len(missing)} dropped frames from {opts.missing_slots}; '
             f'angles {theta[0]:.3f} to {theta[-1]:.3f} deg in steps of '
             f'{step:.4f} deg per trigger')
         return theta
@@ -371,7 +231,7 @@ def derive_theta(tomo, ome_range_deg, args, num_frames):
     if tomo.filetype != 'h5':
         return None
 
-    start_ang, step = angle_params(tomo, start_ang, end_ang, args)
+    start_ang, step = angle_params(tomo, start_ang, end_ang, opts)
 
     slot, missing = tomoutil.frame_slots_from_h5(tomo.tomo_images.filename)
     if len(slot) != num_frames:
@@ -457,14 +317,16 @@ def load_tomo_data(tomo, rows=None):
     return rad_stack, image_stack, filtered_rad_stack, tomo_num_imgs, frame_sums
 
 
-def main():
-    args = parse_args()
-    fname = args.input_file
+def reconstruct(cfg, options=None, progress=None):
+    """Reconstruct the mask described by the nf_config ``cfg`` and return the path of the npz written.
 
-    cfg = nf_config.open_file(fname)[0]
+    ``options`` is a ``ReconstructOptions``; what it leaves unset comes from the yml. ``progress``, if
+    given, is called as ``progress(layers_done, layers_total)`` after each layer.
+    """
+    opts = resolve_options(cfg, options)
 
     output_stem = cfg.analysis_name
-    output_dir = cfg.output_directory
+    output_dir = opts.output_dir or cfg.output_directory
     det_file = cfg.input_files.detector_file
     tomo = cfg.tomography
 
@@ -490,8 +352,8 @@ def main():
 
     pixel_size = panel.pixel_size_row
     rot_axis_pos = panel.tvec[0]
-    vert_beam_center = (panel.tvec[1] if args.vert_beam_center is None
-                        else args.vert_beam_center)
+    vert_beam_center = (panel.tvec[1] if opts.vert_beam_center is None
+                        else opts.vert_beam_center)
 
     vert_points = np.arange(
         v_bnds[0] + voxel_spacing / 2.0, v_bnds[1], voxel_spacing)
@@ -502,8 +364,8 @@ def main():
     # Reconstruction circle (diameter, mm) that contains the whole x/z grid.
     # The grid is a rectangle centered at (x_center, z_center) about the
     # rotation axis; its farthest corner sets the radius.
-    if args.cross_sectional_dim is not None:
-        cross_sectional_dim = args.cross_sectional_dim
+    if opts.cross_sectional_dim is not None:
+        cross_sectional_dim = opts.cross_sectional_dim
     else:
         cross_sectional_dim = 2.0 * np.hypot(
             abs(x_center) + x_length / 2.0, abs(z_center) + z_length / 2.0)
@@ -523,11 +385,11 @@ def main():
 
     n_layers = len(vert_points)
     selected = None   # None: every layer in v_bnds
-    if args.layer_indices is not None:
-        selected = list(args.layer_indices)
-    elif not args.all_layers:
-        selected = [n_layers // 2 if args.layer_index is None
-                    else args.layer_index]
+    if opts.layer_indices is not None:
+        selected = list(opts.layer_indices)
+    elif not opts.all_layers:
+        selected = [n_layers // 2 if opts.layer_index is None
+                    else opts.layer_index]
     if selected is not None:
         bad_idx = [i for i in selected if not 0 <= i < n_layers]
         if bad_idx:
@@ -550,26 +412,26 @@ def main():
     band = None
     row0 = 0
     if tomo.filetype == 'h5':
-        row0 = max(int(rows_to_recon.min()) - args.row_margin, 0)
-        row1 = min(int(rows_to_recon.max()) + args.row_margin + 1, nrows)
+        row0 = max(int(rows_to_recon.min()) - opts.row_margin, 0)
+        row1 = min(int(rows_to_recon.max()) + opts.row_margin + 1, nrows)
         band = (row0, row1)
         logger.info(f'Loading detector rows {row0}:{row1} of {nrows}')
 
     (rad_stack, image_stack, filtered_rad_stack, tomo_num_imgs,
      frame_sums) = load_tomo_data(tomo, rows=band)
 
-    theta = derive_theta(tomo, ome_range_deg, args, tomo_num_imgs)
+    theta = derive_theta(tomo, ome_range_deg, opts, tomo_num_imgs)
 
     # bad frames are judged on the whole frame, not just the band
     frame_intensity = (frame_sums if frame_sums is not None
                        else np.sum(image_stack, axis=(1, 2)))
     bad_frames = np.argwhere(
         frame_intensity < np.median(frame_intensity) * 0.95).ravel()
-    if theta is not None and args.max_angle is not None:
-        over = np.flatnonzero(theta > args.max_angle)
+    if theta is not None and opts.max_angle is not None:
+        over = np.flatnonzero(theta > opts.max_angle)
         if len(over):
             logger.info(f'Dropping {len(over)} frames beyond '
-                        f'{args.max_angle} deg: {over.tolist()}')
+                        f'{opts.max_angle} deg: {over.tolist()}')
         bad_frames = np.unique(np.concatenate([bad_frames, over]))
     del rad_stack, image_stack
 
@@ -591,11 +453,11 @@ def main():
         "rot_axis_pos": rot_axis_pos,
         "pixel_size": pixel_size,
         "cross_sectional_dim": cross_sectional_dim,
-        "save_fbp": args.save_fbp,
-        "powder_open_um": args.powder_open_um,
-        "powder_restore_um": args.powder_restore_um,
-        "powder_min_object_um2": args.powder_min_object_um2,
-        "powder_fill_holes_um2": args.powder_fill_holes_um2,
+        "save_fbp": opts.save_fbp,
+        "powder_open_um": opts.powder_open_um,
+        "powder_restore_um": opts.powder_restore_um,
+        "powder_min_object_um2": opts.powder_min_object_um2,
+        "powder_fill_holes_um2": opts.powder_fill_holes_um2,
         "bad_frames": bad_frames,
         "theta": theta,
         "recon_thresh": recon_thresh,
@@ -613,28 +475,32 @@ def main():
     tasks = list(enumerate(rows_to_recon - row0))
     results = [None] * len(tasks)
 
-    logging.info(f'Starting reconstruction for {len(tasks)} layers')
+    logger.info(f'Starting reconstruction for {len(tasks)} layers')
 
-    with mp.Pool(
-        processes=args.processes,
-        initializer=init_reconstruct_worker,
-        initargs=(worker_config,)
-    ) as pool:
-        for completed, (ii, tomo_mask, fbp) in enumerate(
-            pool.imap_unordered(reconstruct_mask_for_layer, tasks), 1
-        ):
-            results[ii] = tomo_mask
-            if fbp is not None:
-                os.makedirs(output_dir, exist_ok=True)
-                np.save(os.path.join(
-                    output_dir, f'{output_stem}_fbp_layer{layer_ids[ii]}.npy'),
-                    fbp)
-            logging.info(f'Completed layer {completed}/{len(tasks)}')
+    try:
+        with mp.Pool(
+            processes=opts.processes,
+            initializer=init_reconstruct_worker,
+            initargs=(worker_config,)
+        ) as pool:
+            for completed, (ii, tomo_mask, fbp) in enumerate(
+                pool.imap_unordered(reconstruct_mask_for_layer, tasks), 1
+            ):
+                results[ii] = tomo_mask
+                if fbp is not None:
+                    np.save(os.path.join(
+                        output_dir,
+                        f'{output_stem}_fbp_layer{layer_ids[ii]}.npy'), fbp)
+                logger.info(f'Completed layer {completed}/{len(tasks)}')
+                if progress is not None:
+                    progress(completed, len(tasks))
+    finally:
+        # the temporary stack is removed even if a worker failed
+        gc.collect()
+        if os.path.exists(memmap_path):
+            os.remove(memmap_path)
 
     full_mask = np.array(results)
-
-    gc.collect()
-    os.remove(memmap_path)
 
     if selected is None or len(selected) == 1:
         if selected is not None:
@@ -654,7 +520,6 @@ def main():
         Xs, Ys, Zs = (np.concatenate([g[k] for g in grids], axis=0)
                       for k in (2, 3, 4))
 
-    os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, f'{output_stem}_tomo_mask.npz')
 
     np.savez_compressed(
@@ -668,9 +533,5 @@ def main():
         v_mm=np.asarray(vert_points)
     )
 
-    logging.info(f'Saved tomography mask to: {output_file}')
-
-
-if __name__ == "__main__":
-    mp.freeze_support()
-    main()
+    logger.info(f'Saved tomography mask to: {output_file}')
+    return output_file

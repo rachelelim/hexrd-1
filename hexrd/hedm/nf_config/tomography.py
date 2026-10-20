@@ -41,6 +41,42 @@ class TomographyConfig(Config):
     def reconstruction(self):
         return TomoReconstructionConfig(self._cfg)
 
+    @property
+    def spec(self):
+        return TomoSpecConfig(self._cfg)
+
+    @property
+    def missing_slots(self):
+        """Text file with the 0-based trigger slots that have no frame"""
+        return self._cfg.get('tomography:missing_slots', None)
+
+    @property
+    def theta_file(self):
+        """.npy file with one projection angle (deg) per frame"""
+        return self._cfg.get('tomography:theta_file', None)
+
+    @property
+    def deg_per_frame(self):
+        """Angular step per detector trigger (deg), overriding the spec log"""
+        return self._cfg.get('tomography:deg_per_frame', None)
+
+
+class TomoSpecConfig(Config):
+    """The spec log and scan that describe the tomography scan"""
+
+    @property
+    def log(self):
+        return self._cfg.get('tomography:spec:log', None)
+
+    @property
+    def scan(self):
+        return self._cfg.get('tomography:spec:scan', None)
+
+    @property
+    def tomo_dir(self):
+        """Folder with the retiga h5 files (used by the pipeline)"""
+        return self._cfg.get('tomography:spec:tomo_dir', None)
+
 
 class BrightConfig(Config):
 
