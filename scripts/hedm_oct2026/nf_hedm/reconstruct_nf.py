@@ -109,18 +109,15 @@ configuration_filepath = args.input_file
 configuration = nf_config.open_file(configuration_filepath)[0]
 # %
 # Generate the experiment
-experiment, image_stack = nfutil.generate_experiment(configuration)
+experiment = nfutil.Experiment(configuration)
+image_stack = experiment.image_stack
 # Generate the controller
 controller = nfutil.build_controller(configuration)
 
 # %% ===========================================================================
 # LOAD MASK / GENERATE TEST COORDINATES  - NO CHANGES NEEDED
 # ==============================================================================
-Xs, Ys, Zs, mask, test_coordinates = nfutil.generate_test_coordinates(
-    experiment.vertical_bounds, experiment.voxel_spacing, experiment.x_center,
-    experiment.z_center, experiment.x_length, experiment.z_length,
-    mask_data_file=experiment.mask_filepath,
-    vertical_motor_position=experiment.vertical_motor_position)
+Xs, Ys, Zs, mask, test_coordinates = experiment.generate_test_coordinates()
 
 # %% ==========================================================================
 # PRECOMPUTE ORIENTATION DATA
