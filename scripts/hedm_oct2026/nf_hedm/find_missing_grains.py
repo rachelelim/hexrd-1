@@ -23,6 +23,7 @@ import sys
 sys.path.insert(
     0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import nfutil
+from nfutil.orientation_search import merge_orientations
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO,
@@ -80,36 +81,27 @@ def get_low_confidence_voxels(starting_reconstruction: dict, experiment: Any) ->
     )
 
 
-def merge_similar_orientations(quats: np.ndarray, idx: np.ndarray, misorientation_deg: float = 0.25,
+def merge_similar_orientations(exp_maps: np.ndarray, confidence: np.ndarray,
+                               misorientation_deg: float = 0.25,
                                crystal_symmetries: np.ndarray = None) -> np.ndarray:
     """
-    Merge orientations within a misorientation threshold.
+    Merge orientations within a misorientation threshold, keeping the most
+    confident of each group.
 
-    quats are crystal-to-sample orientations (4, n). If crystal_symmetries (4, n_sym)
-    is given, symmetry-equivalent orientations count as the same orientation.
+    exp_maps (n, 3) are crystal-to-sample orientations and confidence (n,) their
+    confidences. crystal_symmetries (4, n_sym) are the crystal symmetry operators,
+    which act on the crystal side of the orientation, so orientations that differ
+    by a symmetry operation count as the same. Returns the merged exp maps (m, 3).
     """
-    working_quats = quats[:, idx.squeeze()]
-    merged_quats = []
-    misorientation_rad = np.radians(misorientation_deg)
-    # rotations.misorientation applies the symmetry operators on the sample-to-crystal side
-    # so conjugate the crystal-to-sample quats to apply the crystal symmetry correctly
-    conjugate = np.array([[1.], [-1.], [-1.], [-1.]])
-    symmetries = None if crystal_symmetries is None else (crystal_symmetries,)
-
-    while working_quats.shape[1] > 0:
-        ref_quat = np.atleast_2d(working_quats[:, 0]).T
-        test_quats = np.atleast_2d(working_quats)
-        misorientations, _ = rotations.misorientation(
-            conjugate * ref_quat, conjugate * test_quats, symmetries)
-        idx_to_merge = misorientations < misorientation_rad
-        merged_quats.append(working_quats[:, 0])
-        working_quats = np.delete(working_quats, idx_to_merge, axis=1)
-
-    final_quats = np.stack(merged_quats, axis=1)
-    final_exp_maps = rotations.expMapOfQuat(final_quats)
-    logging.info(
-        f'Found {final_quats.shape[1]} additional grains during brute force search.')
-    return final_exp_maps
+    if len(exp_maps) == 0:
+        return np.zeros((0, 3))
+    if crystal_symmetries is None:
+        crystal_symmetries = np.array([[1.], [0.], [0.], [0.]])
+    keep = merge_orientations(
+        np.asarray(exp_maps, float), np.asarray(confidence, float),
+        crystal_symmetries, misorientation_deg)
+    logging.info(f'Found {len(keep)} additional grains during brute force search.')
+    return np.asarray(exp_maps, float)[keep]
 
 
 def save_grains_out(experiment: Any, exp_maps: np.ndarray) -> None:
@@ -160,9 +152,10 @@ def rerun_and_save_reconstruction(experiment: Any, controller: Any, image_stack:
 # --- Main Grain Search Workflow ---
 
 
-def find_missing_grains(config_path: str) -> None:
+def find_missing_grains(config_path: str, seed: int = None) -> None:
     """Main workflow for finding missing grains."""
     start_time = time.time()
+    rng = np.random.default_rng(seed)
     configuration = load_configuration(config_path)
     experiment, image_stack, controller = setup_experiment(configuration)
     starting_reconstruction = load_starting_reconstruction(experiment)
@@ -189,7 +182,7 @@ def find_missing_grains(config_path: str) -> None:
 
     # Random search for missing grains
     while test_coordinates.shape[0] > coord_cutoff:
-        idx = np.random.choice(test_coordinates.shape[0])
+        idx = rng.choice(test_coordinates.shape[0])
         coordinate_to_test = test_coordinates[idx, :]
         id_to_test = ids[idx]
 
@@ -222,7 +215,11 @@ def find_missing_grains(config_path: str) -> None:
             found_voxels = np.sum(confidence > experiment.confidence_threshold)
             logging.info(f'Orientation found at {found_voxels} voxels.')
 
-            mask_idx = confidence < experiment.confidence_threshold
+            # Voxels the orientation explains leave the list, and so does the voxel
+            # it was found at, even if it does not clear the threshold. Otherwise
+            # the loop can pick the same voxel again and never make progress.
+            mask_idx = np.logical_and(
+                confidence < experiment.confidence_threshold, ids != id_to_test)
             test_coordinates = test_coordinates[mask_idx]
             ids = ids[mask_idx]
 
@@ -255,13 +252,14 @@ def find_missing_grains(config_path: str) -> None:
     logging.info(
         f"Brute force search done. Refining orientations above {experiment.confidence_threshold} confidence.")
 
-    # Merge similar orientations
-    idx_valid = refined_idx[refined_confidence >
-                            experiment.confidence_threshold]
+    # Merge similar orientations. These are the refined orientations: the grid
+    # orientations they started from can be a degree away, which costs most of
+    # the confidence.
+    valid = refined_confidence > experiment.confidence_threshold
     final_exp_maps = merge_similar_orientations(
-        quats, idx_valid, misorientation_deg=0.5,
-        crystal_symmetries=experiment.plane_data.q_sym)
-    all_exp_maps = np.vstack([new_exp_maps, np.transpose(final_exp_maps)])
+        np.atleast_2d(refined_exp_maps)[valid], np.atleast_1d(refined_confidence)[valid],
+        misorientation_deg=0.5, crystal_symmetries=experiment.plane_data.q_sym)
+    all_exp_maps = np.vstack([new_exp_maps, final_exp_maps])
 
     save_grains_out(experiment, all_exp_maps)
 
@@ -283,8 +281,10 @@ def main():
         description='Find missing grains in NF reconstruction')
     parser.add_argument('input_file',
                         help='Input configuration file for NF reconstruction')
+    parser.add_argument('--seed', type=int, default=None,
+                        help='Seed for the random choice of voxels, for repeatable runs')
     args = parser.parse_args()
-    find_missing_grains(args.input_file)
+    find_missing_grains(args.input_file, seed=args.seed)
 
 
 if __name__ == '__main__':
