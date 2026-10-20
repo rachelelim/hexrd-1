@@ -8,9 +8,8 @@ from scipy.spatial.transform import Rotation as R
 
 from hexrd import rotations
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from nfutil.orientation_search import misorientation_deg  # noqa: E402
-from nfutil.segmentation import (  # noqa: E402
+from hexrd.hedm.grainmap.nfutil.orientation_search import misorientation_deg  # noqa: E402
+from hexrd.hedm.grainmap.nfutil.segmentation import (  # noqa: E402
     grain_average_orientations, misorientation_from_average, misorientation_pairs,
     neighbor_misorientations, quaternions_of_exp_maps, segment_orientation_field)
 

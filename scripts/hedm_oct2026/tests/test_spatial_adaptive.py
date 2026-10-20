@@ -5,8 +5,7 @@ import unittest
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from nfutil.spatial_adaptive import march, neighbor_table  # noqa: E402
+from hexrd.hedm.grainmap.nfutil.spatial_adaptive import march, neighbor_table  # noqa: E402
 
 
 def voronoi_phantom(shape=(1, 60, 70), n_grains=8, seed=0):

@@ -5,8 +5,7 @@ import unittest
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from nfutil.processor_functions import make_chunks  # noqa: E402
+from hexrd.hedm.grainmap.nfutil.processor_functions import make_chunks  # noqa: E402
 
 
 def legacy_chunks(n, ncpus, chunk_size):

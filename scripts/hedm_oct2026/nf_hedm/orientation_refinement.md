@@ -26,7 +26,7 @@ orientations and confidences (compared bit for bit on 60 voxels).
 
 - 92% of the old time was simulating the peaks of each trial orientation. The simulation rebuilt the
   list of symmetry-equivalent reflections on every call and computed pixel sizes that nothing used.
-  `nfutil/simulation.py` returns exactly the angles `simulateGVecs` does without that. This is 3 to 4
+  `hexrd/hedm/grainmap/nfutil/simulation.py` returns exactly the angles `simulateGVecs` does without that. This is 3 to 4
   times faster per orientation, checked identical on 300 random orientations for Ti-7Al (hexagonal)
   and lowO (cubic).
 - The pattern search no longer scores a point twice. The center of every grid is the current best,

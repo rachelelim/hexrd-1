@@ -47,7 +47,7 @@ class ReconstructionCases:
 
     @classmethod
     def setUpClass(cls):
-        import nfutil
+        from hexrd.hedm.grainmap import nfutil
         from hexrd.hedm import nf_config
 
         # The configs use paths relative to the data folder
@@ -78,7 +78,7 @@ class ReconstructionCases:
             self.confidence_map, ref['confidence_map'], atol=1e-12)
 
     def test_spatially_adaptive_agrees_with_all_grains(self):
-        import nfutil
+        from hexrd.hedm.grainmap import nfutil
 
         _, conf, idx, stats = nfutil.reconstruct_spatially_adaptive(
             self.experiment, self.controller, self.experiment.image_stack,
@@ -98,8 +98,8 @@ class ReconstructionCases:
 
 
     def test_refinement_along_the_marching_agrees_with_refining_each_voxel(self):
-        import nfutil
-        from nfutil.orientation_search import misorientation_deg
+        from hexrd.hedm.grainmap import nfutil
+        from hexrd.hedm.grainmap.nfutil.orientation_search import misorientation_deg
 
         exp_maps, conf, origin, misorientation, stats = \
             nfutil.reconstruct_and_refine_spatially_adaptive(
@@ -149,7 +149,7 @@ class TestTi7AlUnmasked(ReconstructionCases, unittest.TestCase):
     min_same_grain = 0.95
 
     def test_generate_experiment_wrapper(self):
-        import nfutil
+        from hexrd.hedm.grainmap import nfutil
 
         experiment, image_stack = nfutil.generate_experiment(
             self.configuration)
@@ -191,8 +191,8 @@ class TestTi7AlMasked(ReconstructionCases, unittest.TestCase):
         return voxels, truth, conf[voxels]
 
     def test_orientation_search_recovers_ff_orientations(self):
-        import nfutil
-        from nfutil.orientation_search import misorientation_deg
+        from hexrd.hedm.grainmap import nfutil
+        from hexrd.hedm.grainmap.nfutil.orientation_search import misorientation_deg
 
         voxels, truth, ff_conf = self._known_voxels(16, seed=3)
         exp_maps, conf, stats = nfutil.search_orientations(
@@ -212,8 +212,8 @@ class TestTi7AlMasked(ReconstructionCases, unittest.TestCase):
                          'takes about 3 minutes, set NF_SLOW_TESTS=1')
     def test_find_missing_orientations_leave_out(self):
         """Remove grains from the FF list, then find them again."""
-        import nfutil
-        from nfutil.orientation_search import misorientation_deg
+        from hexrd.hedm.grainmap import nfutil
+        from hexrd.hedm.grainmap.nfutil.orientation_search import misorientation_deg
 
         # A separate experiment, since grains are removed from it
         experiment = nfutil.Experiment(self.configuration)

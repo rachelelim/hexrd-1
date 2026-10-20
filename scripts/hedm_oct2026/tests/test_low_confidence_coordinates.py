@@ -5,8 +5,7 @@ import unittest
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import nfutil  # noqa: E402
+from hexrd.hedm.grainmap import nfutil  # noqa: E402
 
 
 def reconstruction(shape, confidence=0.2):

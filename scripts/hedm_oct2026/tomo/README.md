@@ -22,7 +22,7 @@ spec.log + dark/bright/tomo .h5  -->  per-layer reconstruction  -->  mask (70 la
 |---|---|
 | `run_tomo_pipeline.py` | **Driver.** Runs all stages for one spec scan. Start here. |
 | `process_tomo_clean.py` | Reconstruction (FBP per layer), thresholding, powder removal, rebinning to the voxel grid. |
-| `tomoutil_REL.py` | Library for the above: streaming loader, attenuation, FBP, cleaning, rebinning. |
+| `hexrd/hedm/grainmap/tomoutil.py` | Library for the above (in hexrd, not this folder): streaming loader, attenuation, FBP, cleaning, rebinning. |
 | `find_missing_frames.py` | Finds dropped frames from the h5 timestamps and writes the missing-slots file. |
 | `parse_spec.py` | Reads `spec.log`: scans, commands, columns (`ome`, `det_exp_out`, ...), comments. Also usable as a CLI. |
 | `interp_layers.py` | Fills bad layers by cubic interpolation of signed-distance maps. |
@@ -38,8 +38,9 @@ The scripts also need `h5py`, `hdf5plugin`, `numpy`, `scipy`, `scikit-image`, `P
 reading fails with `OSError: Can't synchronously read data (can't open directory .../hdf5/plugin)`.
 `pip install hdf5plugin` fixes it.
 
-`process_tomo_clean.py` finds the `nfutil` package in the parent (`hedm_oct2026`) folder, so keep the
-scripts where they are and run them in place. The driver already does this.
+`process_tomo_clean.py` uses `hexrd.hedm.grainmap.nfutil` and `hexrd.hedm.grainmap.tomoutil`, so hexrd must be
+installed in the environment. The scripts can be run from any folder, but `run_tomo_pipeline.py` expects
+`process_tomo_clean.py`, `find_missing_frames.py` and `tomo_config.yml` together in its template folder.
 
 ## Inputs
 
@@ -249,7 +250,7 @@ python smooth_masks.py in.npz out_smooth.npz 1.5
 | Symptom | Cause / fix |
 |---|---|
 | `OSError: ... can't open directory .../hdf5/plugin` | Install `hdf5plugin` in the environment. |
-| `ModuleNotFoundError: nfutil` | Run `process_tomo_clean.py` in place (not a copy elsewhere); it looks for `nfutil` in the parent folder. |
+| `ModuleNotFoundError: hexrd.hedm.grainmap` | hexrd is not installed in this environment (or is an older version without `grainmap.nfutil` as a package). |
 | "dark and bright look swapped" | Check which scans are dark/bright; pass `--dark` / `--bright`. |
 | Broken or C-shaped rings in some layers | Bright-field clipping at 4095; see Quality control. |
 | Mask is mostly speckle | The layer rows are outside the beam: check `--vert-beam-center` and `v_bnds` against a radiograph. |

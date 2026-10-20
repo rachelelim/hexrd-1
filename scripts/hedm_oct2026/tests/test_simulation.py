@@ -41,7 +41,7 @@ class SimulationCases:
 
     @classmethod
     def setUpClass(cls):
-        import nfutil
+        from hexrd.hedm.grainmap import nfutil
         from hexrd.hedm import nf_config
         cls._cwd = os.getcwd()
         os.chdir(cls.folder)
@@ -50,7 +50,7 @@ class SimulationCases:
         cls.orientations = R.random(120, random_state=3).as_rotvec()
 
     def check(self, experiment):
-        from nfutil.simulation import simulate_angles
+        from hexrd.hedm.grainmap.nfutil.simulation import simulate_angles
         for exp_map in self.orientations:
             expected = reference_angles(experiment, exp_map)
             got = simulate_angles(experiment, exp_map)
@@ -62,14 +62,14 @@ class SimulationCases:
         self.check(self.experiment)
 
     def test_ring_subsets(self):
-        from nfutil.orientation_search import ring_subset_experiment
+        from hexrd.hedm.grainmap.nfutil.orientation_search import ring_subset_experiment
         for n_rings in (3, 8):
             self.check(ring_subset_experiment(self.experiment, n_rings))
 
     def test_precompute_uses_the_same_peaks(self):
         # the precompute functions feed everything downstream
-        import nfutil
-        from nfutil.processor_functions import (
+        from hexrd.hedm.grainmap import nfutil
+        from hexrd.hedm.grainmap.nfutil.processor_functions import (
             _precompute_diffraction_data_of_single_orientation as one,
             _precompute_diffraction_data_of_many_orientations as many)
         subset = self.orientations[:5]

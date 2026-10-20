@@ -5,8 +5,7 @@ import unittest
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from nfutil.processor_functions import _pattern_search_refine  # noqa: E402
+from hexrd.hedm.grainmap.nfutil.processor_functions import _pattern_search_refine  # noqa: E402
 
 RADII = [5.0, 4., 3.5, 3., 2.5, 2., 1.5, 1.0, 0.5, 0.25, 0.1]
 

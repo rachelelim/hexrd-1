@@ -65,13 +65,7 @@ from hexrd.hedm import nf_config
 import os
 import sys
 
-# nfutil lives in the parent (hedm_oct2026) folder
-try:
-    _scripts_dir = os.path.dirname(os.path.abspath(__file__))
-except NameError:  # run interactively, assume the working directory is this folder
-    _scripts_dir = os.getcwd()
-sys.path.insert(0, os.path.dirname(_scripts_dir))
-import nfutil
+from hexrd.hedm.grainmap import nfutil
 import multiprocessing as mp
 import numpy as np
 

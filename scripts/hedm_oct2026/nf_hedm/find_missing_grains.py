@@ -32,11 +32,8 @@ from hexrd.transforms import xfcapi
 from hexrd.hedm import nf_config
 import sys
 
-# nfutil lives in the parent (hedm_oct2026) folder
-sys.path.insert(
-    0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import nfutil
-from nfutil.orientation_search import merge_orientations, misorientation_deg as orientation_difference_deg
+from hexrd.hedm.grainmap import nfutil
+from hexrd.hedm.grainmap.nfutil.orientation_search import merge_orientations, misorientation_deg as orientation_difference_deg
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO,

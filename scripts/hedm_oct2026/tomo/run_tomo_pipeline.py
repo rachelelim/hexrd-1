@@ -202,7 +202,7 @@ def main():
     ap.add_argument('--tomo-dir', default='.', help='folder with the retiga_*.h5 files (default: cwd)')
     ap.add_argument('--run-dir', default=None, help='default: <tomo-dir>/run_scan<SCAN>')
     ap.add_argument('--analysis', default=None, help='output name stem (default diamond-1a_scan<SCAN>)')
-    ap.add_argument('--template-dir', default=str(HERE), help='folder with process_tomo_clean.py, tomoutil_REL.py, tomo_config.yml')
+    ap.add_argument('--template-dir', default=str(HERE), help='folder with process_tomo_clean.py, find_missing_frames.py, tomo_config.yml')
     ap.add_argument('--template-config', default=None)
     ap.add_argument('--detector', required=True, help='detector yml, e.g. retiga_e7.yml')
     ap.add_argument('--dark'); ap.add_argument('--bright')

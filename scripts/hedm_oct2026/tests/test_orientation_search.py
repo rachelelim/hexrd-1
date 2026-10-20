@@ -8,8 +8,7 @@ from scipy.spatial.transform import Rotation as R
 
 from hexrd import rotations
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from nfutil.orientation_search import (  # noqa: E402
+from hexrd.hedm.grainmap.nfutil.orientation_search import (  # noqa: E402
     known_orientations, merge_orientations, misorientation_deg, separate_candidates)
 
 Q_SYM = rotations.quatOfLaueGroup('d6h')

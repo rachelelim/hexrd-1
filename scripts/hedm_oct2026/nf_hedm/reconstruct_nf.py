@@ -67,10 +67,7 @@ from hexrd.hedm import nf_config
 import os
 import sys
 
-# nfutil lives in the parent (hedm_oct2026) folder
-sys.path.insert(
-    0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import nfutil
+from hexrd.hedm.grainmap import nfutil
 
 # Matplotlib
 # This is to allow interactivity of inline plots in your gui

@@ -84,6 +84,8 @@ Other flags: `--batch-size` (30), `--grid-spacing` (1.75 degrees), `--seed`. The
 From Python:
 
 ```python
+from hexrd.hedm.grainmap import nfutil
+
 em, conf, stats = nfutil.search_orientations(experiment, controller, image_stack, coordinates)
 found = nfutil.find_missing_orientations(experiment, controller, image_stack,
                                          orientation_data, test_coordinates, mask)

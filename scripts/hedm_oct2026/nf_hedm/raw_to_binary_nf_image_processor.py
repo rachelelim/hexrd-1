@@ -33,10 +33,7 @@ import os
 import numpy as np
 import sys
 
-# nfutil lives in the parent (hedm_oct2026) folder
-sys.path.insert(
-    0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import nfutil
+from hexrd.hedm.grainmap import nfutil
 from hexrd.hedm import nf_config
 import matplotlib.pyplot as plt
 import argparse

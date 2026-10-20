@@ -11,9 +11,8 @@ import unittest
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from nfutil.processor_functions import _pattern_search_refine  # noqa: E402
-from nfutil.spatial_adaptive import boundary_band, march_refined, neighbor_table, refine_boundaries  # noqa: E402
+from hexrd.hedm.grainmap.nfutil.processor_functions import _pattern_search_refine  # noqa: E402
+from hexrd.hedm.grainmap.nfutil.spatial_adaptive import boundary_band, march_refined, neighbor_table, refine_boundaries  # noqa: E402
 
 GLOBAL_RADII = (1.0, 0.5, 0.25, 0.1)
 LOCAL_RADII = (0.25, 0.1)

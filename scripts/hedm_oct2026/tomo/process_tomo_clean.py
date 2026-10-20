@@ -10,13 +10,9 @@ import multiprocessing as mp
 import numpy as np
 import yaml
 
-# nfutil lives in the parent (hedm_oct2026) folder
-sys.path.insert(
-    0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from hexrd.hedm import nf_config
-import nfutil
-import tomoutil_REL as tomoutil
+from hexrd.hedm.grainmap import nfutil
+from hexrd.hedm.grainmap import tomoutil
 
 from hexrd import instrument
 
