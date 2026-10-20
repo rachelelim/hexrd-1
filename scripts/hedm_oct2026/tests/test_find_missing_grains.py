@@ -71,5 +71,37 @@ class TestMergeSimilarOrientations(unittest.TestCase):
         self.assertEqual(out.shape, (2, 3))
 
 
+class TestDropKnownOrientations(unittest.TestCase):
+
+    def setUp(self):
+        self.a = R.from_rotvec([0.4, 0.1, -0.3])
+        self.b = rot(10, [1, 0, 0]) * self.a
+        self.known = np.array([self.a.as_rotvec()])
+
+    def drop(self, rotations_, tol=0.5):
+        em = np.array([r.as_rotvec() for r in rotations_])
+        return fmg.drop_known_orientations(em, self.known, tol, Q_SYM)
+
+    def test_known_orientation_is_dropped(self):
+        np.testing.assert_array_equal(self.drop([rot(0.1, [0, 1, 0]) * self.a]), [False])
+
+    def test_distant_orientation_is_kept(self):
+        np.testing.assert_array_equal(self.drop([self.b]), [True])
+
+    def test_mixed(self):
+        near, far = rot(0.2, [1, 1, 0]) * self.a, self.b
+        np.testing.assert_array_equal(self.drop([near, far, near]), [False, True, False])
+
+    def test_crystal_side_equivalent_is_dropped(self):
+        np.testing.assert_array_equal(self.drop([self.a * OPS[2]]), [False])
+
+    def test_sample_side_image_is_kept(self):
+        np.testing.assert_array_equal(self.drop([OPS[2] * self.a]), [True])
+
+    def test_nothing_known(self):
+        out = fmg.drop_known_orientations(np.array([self.a.as_rotvec()]), np.zeros((0, 3)), 0.5, Q_SYM)
+        np.testing.assert_array_equal(out, [True])
+
+
 if __name__ == '__main__':
     unittest.main()
