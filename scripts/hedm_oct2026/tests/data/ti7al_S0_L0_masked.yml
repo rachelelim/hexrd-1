@@ -1,0 +1,70 @@
+# Copy of ti7-1/NF/S0_L0.yml for the masked regression test: sets the tomo mask
+# and selects the single mask layer centred at y = -0.0025 mm.
+analysis_name: Ti7Al_init_L0
+main_directory: "./"
+output_directory: "./"
+
+input_files:
+  detector_file: "retiga.yml"
+  materials_file: "../../materials-ti7al.h5"
+  grains_out_file: "Ti7Al_S0_master.out"
+
+output_plot_check: False
+
+experiment:
+  beam_energy: 61.332 # keV
+  beam_vertical_span: [-0.025, 0.025] # mm
+
+  material_name: ti7al
+  max_tth: None
+
+  comp_thresh: 0.5
+  chi2_thresh: 0.05
+
+  images_and_omegas:
+    omega_start: 0.0 # Degrees
+    omega_stop: 360. # Degrees
+    omega_correction: -0.0 # Degrees (float) to shift images postive or negative through omega
+
+  misorientation:
+    use_misorientation: False
+    bound: 0.25 # Degrees
+    spacing: 0.25 # Degrees (will not be used if bound = 0.0)
+
+
+NF_reconstruction:
+  tomography:
+    mask_filepath: ../Ti7Al_init_tomo_clean.npz # relative to the data folder (ti7-1/NF)
+    use_single_layer: False
+    vertical_motor_position: 0 #-0.3
+
+
+  voxel_spacing: 0.01 # mm - cubic voxel size for reconstruction
+  x_center: 0.
+  z_center: 0.
+  x_length: 1.25
+  z_length: 1.25
+  desired_vertical_span: [-0.0025, 0.0025] #[-0.075, 0.075] #mm - span of vertical space to reconstruct
+
+  beam_stop:
+    beam_stop_filepath: #'/nfs/chess/aux/reduced_data/cycles/' # Path or leave blank to generate beam_stop with parameters
+    # Below parameters will only be used if beam_stop_filepath: None
+    beam_stop_vertical_center: 0 # mm - Measured from the origin of the detector paramters
+    beam_stop_vertical_span: 1.2 # mm - Total span of the beam stop vertically
+
+  missing_grains:
+    reconstructed_data_path:
+    ori_grid_spacing: 1.0
+    confidence_threshold: 0.7 # Anything less than this will be looked at for new grains
+    low_confidence_sparsing: 1 # 0 will take all voxels, 1 will take about half, 2 about a quarter - uses a sparse regular grid
+    errode_free_surface: 1 # NF is poor at the surface already, removes the free surface of your tomo mask from the search space
+    coord_cutoff_scale: 0.05
+    iter_cutoff: 20
+    re_run_and_save: 0
+
+multiprocessing:
+  num_cpus: -1 # Number of threads to use [all = os.cpu_count(), half = os.cpu_count()/2 (default), negative number = os.cpu_count()-num, positive number = num]
+  chunk_size: -1 # Use -1 if you wish automatic chunk size calculation
+  check: None
+  limit: None
+  generate: None
