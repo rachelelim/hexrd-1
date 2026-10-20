@@ -134,6 +134,79 @@ class TestTi7AlMasked(ReconstructionCases, unittest.TestCase):
     min_close = 0.99
     min_same_grain = 0.97
 
+    def _known_voxels(self, n, seed, low=0.8):
+        """Voxels the reference gives to an FF grain with confidence above
+        ``low``, with that grain's orientation. The FF orientations come from
+        far-field data, so they are independent of the NF images."""
+        ref = np.load(os.path.join(HERE, 'data', self.reference))
+        m = self.mask.astype(bool)
+        grain = ref['grain_map'][m].astype(int)
+        conf = ref['confidence_map'][m]
+        rng = np.random.default_rng(seed)
+        voxels = rng.choice(np.where(conf > low)[0], n, replace=False)
+        truth = np.array([self.experiment.exp_maps[
+            np.where(self.experiment.remap == grain[v])[0][0]] for v in voxels])
+        return voxels, truth, conf[voxels]
+
+    def test_orientation_search_recovers_ff_orientations(self):
+        import nfutil
+        from nfutil.orientation_search import misorientation_deg
+
+        voxels, truth, ff_conf = self._known_voxels(16, seed=3)
+        exp_maps, conf, stats = nfutil.search_orientations(
+            self.experiment, self.controller, self.experiment.image_stack,
+            self.coords[voxels])
+        q_sym = self.experiment.plane_data.q_sym
+        mis = np.array([misorientation_deg(t, e[None], q_sym)[0]
+                        for t, e in zip(truth, exp_maps)])
+        # Held-out checks of this search found about 96% within 0.5 degrees
+        self.assertGreaterEqual((mis < 0.5).mean(), 0.85)
+        # Where it did recover the orientation, it fits the images about as
+        # well as the FF grain does
+        found = mis < 0.5
+        self.assertTrue((conf[found] >= ff_conf[found] - 0.05).all())
+
+    @unittest.skipUnless(os.environ.get('NF_SLOW_TESTS'),
+                         'takes about 3 minutes, set NF_SLOW_TESTS=1')
+    def test_find_missing_orientations_leave_out(self):
+        """Remove grains from the FF list, then find them again."""
+        import nfutil
+        from nfutil.orientation_search import misorientation_deg
+
+        # A separate experiment, since grains are removed from it
+        experiment = nfutil.Experiment(self.configuration)
+        ref = np.load(os.path.join(HERE, 'data', self.reference))
+        m = self.mask.astype(bool)
+        grain = ref['grain_map'][m].astype(int)
+        ids, counts = np.unique(grain, return_counts=True)
+        rng = np.random.default_rng(5)
+        removed_ids = rng.choice(ids[counts >= 300], 6, replace=False)
+        removed = np.array([np.where(experiment.remap == i)[0][0] for i in removed_ids])
+        truth = experiment.exp_maps[removed].copy()
+        keep = np.setdiff1d(np.arange(len(experiment.exp_maps)), removed)
+        experiment.exp_maps = experiment.exp_maps[keep]
+        experiment.remap = experiment.remap[keep]
+        experiment.n_grains = len(keep)
+        image_stack = experiment.image_stack
+        data = nfutil.precompute_diffraction_data(
+            experiment, self.controller, experiment.exp_maps)
+        _, before, _, _ = nfutil.reconstruct_spatially_adaptive(
+            experiment, self.controller, image_stack, data, self.coords, self.mask)
+
+        found = nfutil.find_missing_orientations(
+            experiment, self.controller, image_stack, data, self.coords, self.mask)
+        q_sym = experiment.plane_data.q_sym
+        recovered = sum(misorientation_deg(t, found['exp_maps'], q_sym).min() < 0.5
+                        for t in truth) if len(found['exp_maps']) else 0
+        self.assertGreaterEqual(recovered, 4)    # 5 of 6 in the check this is based on
+
+        data = nfutil.add_orientations(experiment, data, found['exp_maps'])
+        _, after, _, _ = nfutil.reconstruct_spatially_adaptive(
+            experiment, self.controller, image_stack, data, self.coords, self.mask)
+        gone = np.isin(grain, removed_ids)
+        self.assertGreater(after[gone].mean(), before[gone].mean() + 0.15)
+        self.assertLess((after < 0.5).sum(), 0.5*(before < 0.5).sum())
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -600,6 +600,93 @@ def _test_orientation_bags_at_coordinates(experiment, image_stack, orientation_d
     return best_idx, best_confidence, n_tests, start, stop
 
 
+def _orientation_confidences(experiment, image_stack, coord, exp_maps):
+    """Confidence at one coordinate of each orientation in exp_maps (n, 3).
+
+    The diffraction data of every orientation is simulated here, so the
+    orientations need not be precomputed.
+    """
+    exp_maps = np.atleast_2d(exp_maps)
+    confidences = np.zeros(exp_maps.shape[0])
+    for i, exp_map in enumerate(exp_maps):
+        _, angles, rMat_ss, gvec_cs, rMat_c = \
+            _precompute_diffraction_data_of_single_orientation(experiment, exp_map)
+        det_xy = xfcapi.gvec_to_xy(
+            gvec_cs, experiment.rMat_d, rMat_ss, np.squeeze(rMat_c),
+            experiment.tVec_d, experiment.tVec_s, coord)
+        confidences[i] = _quant_and_clip_confidence(
+            det_xy, angles[:, 2], image_stack, experiment.base, experiment.inv_deltas,
+            experiment.clip_vals, experiment.bsp, experiment.ome_edges)
+    return confidences
+
+
+def _grid_top_candidates(experiment, image_stack, grid_exp_maps, coords, n_keep, start=0, stop=0):
+    """
+        Goal:
+            Score a chunk of an orientation grid at many coordinates and keep the best few per coordinate.
+        Input:
+            grid_exp_maps: (n, 3) exp-maps of the whole grid, only [start:stop] is used
+            coords: (V, 3) coordinates to test
+            n_keep: how many of the best grid orientations to keep per coordinate
+        Output:
+            top_idx: (V, k) indices into the whole grid
+            top_confidence: (V, k) their confidences
+            n_tests: number of orientation/coordinate tests performed
+    """
+    chunk = grid_exp_maps[start:stop]
+    _, all_angles, all_rMat_ss, all_gvec_cs, all_rMat_c, _, _ = \
+        _precompute_diffraction_data_of_many_orientations(experiment, chunk)
+    n_oris = len(chunk)
+    n_coords = len(coords)
+    tD = experiment.tVec_d
+    rD = experiment.rMat_d
+    tS = experiment.tVec_s
+    confidence = np.zeros((n_coords, n_oris))
+    for i in np.arange(n_oris):
+        for v in np.arange(n_coords):
+            det_xy = xfcapi.gvec_to_xy(
+                all_gvec_cs[i], rD, all_rMat_ss[i], all_rMat_c[i], tD, tS, coords[v])
+            confidence[v, i] = _quant_and_clip_confidence(
+                det_xy, all_angles[i][:, 2], image_stack, experiment.base,
+                experiment.inv_deltas, experiment.clip_vals, experiment.bsp,
+                experiment.ome_edges)
+    k = min(n_keep, n_oris)
+    top = np.argpartition(-confidence, k - 1, axis=1)[:, :k]
+    return (start + top, np.take_along_axis(confidence, top, axis=1),
+            n_oris*n_coords, start, stop)
+
+
+def _refine_orientations_at_coordinates(experiment, image_stack, coordinates, start_exp_maps, radii_deg, start=0, stop=0):
+    """
+        Goal:
+            Refine a starting orientation at each coordinate with the coarse-to-fine pattern search.
+        Input:
+            coordinates: (T, 3) coordinates, one per task
+            start_exp_maps: (T, 3) orientation to start from at each coordinate
+            radii_deg: search radii, see _pattern_search_refine
+        Output:
+            exp_maps: (stop - start, 3) refined orientations
+            confidence: their confidences
+            n_evals: number of orientations simulated and scored
+    """
+    n = stop - start
+    exp_maps = np.zeros((n, 3))
+    confidence = np.zeros(n)
+    n_evals = 0
+    for i in np.arange(n):
+        coord = coordinates[start + i]
+        counter = [0]
+
+        def cost(trial_exp_maps):
+            counter[0] += len(trial_exp_maps)
+            return _orientation_confidences(experiment, image_stack, coord, trial_exp_maps)
+
+        exp_maps[i], confidence[i] = _pattern_search_refine(
+            start_exp_maps[start + i], cost, radii_deg)
+        n_evals += counter[0]
+    return exp_maps, confidence, n_evals, start, stop
+
+
 def _precompute_diffraction_data_of_single_orientation(experiment, exp_map):
     """
         Goal:
@@ -1201,6 +1288,14 @@ def _load_images_distributor(chunk):
 
 def _test_orientation_bags_at_coordinates_distributor(chunk):
     return _run_chunk(_test_orientation_bags_at_coordinates, chunk)
+
+
+def _grid_top_candidates_distributor(chunk):
+    return _run_chunk(_grid_top_candidates, chunk)
+
+
+def _refine_orientations_distributor(chunk):
+    return _run_chunk(_refine_orientations_at_coordinates, chunk)
 
 
 def _remove_median_darkfield_distributor(chunk):
