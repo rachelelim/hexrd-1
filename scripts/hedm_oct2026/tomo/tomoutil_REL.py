@@ -5,6 +5,7 @@ import logging
 from typing import Sequence
 
 import h5py
+import hdf5plugin  # noqa: F401  registers the HDF5 LZ4 filter the Retiga files use
 import numpy as np
 import scipy.ndimage as ndi
 from skimage.transform import iradon, resize
@@ -56,9 +57,36 @@ def _load_tiff_stack(
     return stack
 
 
-def _load_h5_stack(filename: str | Path, dataset_path: str = "entry/data/data/") -> np.ndarray:
+def _load_h5_stack(
+    filename: str | Path,
+    dataset_path: str = "entry/data/data/",
+    rows: tuple[int, int] | None = None,
+) -> np.ndarray:
+    """Load an HDF5 image stack as float32.
+
+    rows=(r0, r1) loads only detector rows r0:r1 of every frame, one frame at
+    a time, so the full-frame stack never has to fit in memory.
+    """
     with h5py.File(filename, "r") as h5f:
-        return np.asarray(h5f[dataset_path], dtype=np.float32)
+        dset = h5f[dataset_path]
+        if rows is None:
+            return np.asarray(dset, dtype=np.float32)
+        r0, r1 = rows
+        stack = np.empty((dset.shape[0], r1 - r0, dset.shape[2]), dtype=np.float32)
+        for i in range(dset.shape[0]):
+            stack[i] = dset[i, r0:r1, :]
+        return stack
+
+
+def h5_frame_sums(
+    filename: str | Path,
+    dataset_path: str = "entry/data/data/",
+) -> np.ndarray:
+    """Total counts of each full frame (read one frame at a time)."""
+    with h5py.File(filename, "r") as h5f:
+        dset = h5f[dataset_path]
+        return np.array(
+            [dset[i].sum(dtype=np.float64) for i in range(dset.shape[0])])
 
 
 def read_frame_timestamps(
@@ -113,9 +141,13 @@ def frame_slots_from_h5(filename: str | Path) -> tuple[np.ndarray, np.ndarray]:
     return slot, missing
 
 
-def gen_median_image_h5(filename: str | Path, dataset_path: str = "entry/data/data/") -> np.ndarray:
+def gen_median_image_h5(
+    filename: str | Path,
+    dataset_path: str = "entry/data/data/",
+    rows: tuple[int, int] | None = None,
+) -> np.ndarray:
     logger.info("Loading HDF5 data for median image")
-    stack = _load_h5_stack(filename, dataset_path)
+    stack = _load_h5_stack(filename, dataset_path, rows)
     logger.info("Computing median image")
     return np.median(stack, axis=0)
 
@@ -159,22 +191,28 @@ def _compute_attenuation(
         tdf = np.asarray(tdf, dtype=np.float32)
         _validate_2d_shape("tdf", tdf, expected_shape)
 
-    numerator = image_stack.astype(np.float32) - tdf
-    denominator = tbf - tdf
+    denominator = np.clip(tbf - tdf, eps, None)
 
-    denominator = np.clip(denominator, eps, None)
-    ratio = numerator / denominator
-    ratio = np.clip(ratio, eps, None)
+    # One frame at a time: same arithmetic as doing the whole stack at once,
+    # without holding several full-stack temporaries.
+    rad_stack = np.empty(image_stack.shape, dtype=np.float32)
+    min_rad = np.inf
+    any_invalid = False
+    for i in range(nimgs):
+        ratio = np.clip(
+            (image_stack[i].astype(np.float32) - tdf) / denominator, eps, None)
+        rad = -np.log(ratio)
+        bad = ~np.isfinite(rad)
+        any_invalid |= bool(bad.any())
+        finite = rad[~bad]
+        if finite.size:
+            min_rad = min(min_rad, finite.min())
+        rad_stack[i] = rad
 
-    rad_stack = -np.log(ratio)
-
-    invalid_mask = ~np.isfinite(rad_stack)
-    if np.all(invalid_mask):
+    if not np.isfinite(min_rad):
         raise ValueError("All attenuation values are invalid")
-
-    finite_vals = rad_stack[~invalid_mask]
-    min_rad = finite_vals.min()
-    rad_stack = np.where(invalid_mask, min_rad, rad_stack)
+    if any_invalid:
+        rad_stack[~np.isfinite(rad_stack)] = min_rad
 
     filtered_rad_stack = np.empty_like(rad_stack)
     for i in range(nimgs):
@@ -189,10 +227,65 @@ def gen_attenuation_rads_h5(
     tbf: np.ndarray,
     tdf: np.ndarray | None = None,
     dataset_path: str = "entry/data/data/",
+    rows: tuple[int, int] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    image_stack = _load_h5_stack(filename, dataset_path)
+    image_stack = _load_h5_stack(filename, dataset_path, rows)
     rad_stack, filtered_rad_stack = _compute_attenuation(image_stack, tbf, tdf)
     return rad_stack, image_stack, filtered_rad_stack
+
+
+def gen_filtered_rads_h5(
+    filename: str | Path,
+    tbf: np.ndarray,
+    tdf: np.ndarray | None = None,
+    dataset_path: str = "entry/data/data/",
+    rows: tuple[int, int] | None = None,
+    gaussian_sigma: float = 2.0,
+    eps: float = 1e-8,
+    out_dtype: np.dtype = np.float16,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Streaming gen_attenuation_rads_h5: one frame in memory at a time.
+
+    Returns (filtered_rad_stack, frame_sums). The filtered stack is stored
+    directly as out_dtype (float16 by default, which is what the
+    reconstruction uses), so peak memory is the output stack alone. Each frame
+    gets the same arithmetic as _compute_attenuation. frame_sums are the
+    total counts of each *full* frame (not just the rows band), for judging
+    bad frames.
+    """
+    with h5py.File(filename, "r") as h5f:
+        dset = h5f[dataset_path]
+        nimgs, nrows, ncols = dset.shape
+        r0, r1 = (0, nrows) if rows is None else rows
+        expected_shape = (r1 - r0, ncols)
+
+        tbf = np.asarray(tbf, dtype=np.float32)
+        _validate_2d_shape("tbf", tbf, expected_shape)
+        if tdf is None:
+            tdf = np.zeros(expected_shape, dtype=np.float32)
+        else:
+            tdf = np.asarray(tdf, dtype=np.float32)
+            _validate_2d_shape("tdf", tdf, expected_shape)
+        denominator = np.clip(tbf - tdf, eps, None)
+
+        filtered = np.empty((nimgs, *expected_shape), dtype=out_dtype)
+        frame_sums = np.empty(nimgs, dtype=np.float64)
+        for i in range(nimgs):
+            frame = dset[i]
+            frame_sums[i] = frame.sum(dtype=np.float64)
+            ratio = np.clip(
+                (frame[r0:r1].astype(np.float32) - tdf) / denominator, eps, None)
+            rad = -np.log(ratio)
+            if not np.isfinite(rad).all():
+                # The non-streaming path would replace these with the stack
+                # minimum, which is unknown until the whole stack is read.
+                raise ValueError(
+                    f"non-finite attenuation in frame {i}; use "
+                    "gen_attenuation_rads_h5 for this stack")
+            filtered[i] = ndi.gaussian_filter(rad, sigma=gaussian_sigma)
+            if i % 100 == 0:
+                logger.info(f"filtered frame {i}/{nimgs}")
+    return filtered, frame_sums
 
 
 def gen_attenuation_rads(
@@ -282,13 +375,48 @@ def threshold_and_clean_tomo_layer(
     edge_cleaning_iter: int | None = None,
     erosion_iter: int = 1,
     dilation_iter: int = 4,
+    powder_open_um: float = 0.0,
+    pixel_size_um: float | None = None,
+    powder_restore_um: float = 0.0,
+    powder_min_object_um2: float | None = None,
+    powder_fill_holes_um2: float | None = None,
 ) -> np.ndarray:
+    """Threshold the FBP and clean it at full resolution.
+
+    Powder removal (powder_open_um > 0, needs pixel_size_um): after the
+    closing, a morphological opening with a disk of radius powder_open_um
+    deletes everything narrower than twice that radius (powder particles,
+    necks and thin wall roughness) while keeping the thick lattice walls.
+    powder_restore_um then gives back original pixels within that distance of
+    the opened shape, so the true wall edge survives and only powder farther
+    out stays removed. powder_min_object_um2 / powder_fill_holes_um2, if given,
+    replace noise_obj_size / min_hole_size with sizes in um^2.
+    """
     binary = reconstruction_fbp > recon_thresh
 
     if dilation_iter > 0:
         binary = ndi.binary_dilation(binary, iterations=dilation_iter)
     if erosion_iter > 0:
         binary = ndi.binary_erosion(binary, iterations=erosion_iter)
+
+    if powder_open_um > 0:
+        if not pixel_size_um or pixel_size_um <= 0:
+            raise ValueError("pixel_size_um is required for powder removal")
+        r_px = powder_open_um / pixel_size_um
+        # opening = erode by a disk, then dilate back; both via distance maps
+        core = ndi.distance_transform_edt(binary) > r_px
+        opened = ndi.distance_transform_edt(~core) <= r_px
+        if powder_restore_um > 0:
+            near = (ndi.distance_transform_edt(~opened)
+                    <= powder_restore_um / pixel_size_um)
+            binary = binary & near
+        else:
+            binary = binary & opened
+        px_area = pixel_size_um ** 2
+        if powder_min_object_um2 is not None:
+            noise_obj_size = powder_min_object_um2 / px_area
+        if powder_fill_holes_um2 is not None:
+            min_hole_size = powder_fill_holes_um2 / px_area
 
     labeled, num_labels = ndi.label(binary)
     if num_labels > 0:
