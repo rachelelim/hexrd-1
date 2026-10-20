@@ -606,6 +606,20 @@ def stitch_nf_diffraction_volumes(output_dir, output_stem, filepaths, material,
     return final_orientations
 
 
+def _thin_every_other_voxel(sparse_mask):
+    """Zero the even indices along each axis, in place.
+
+    An axis with a single index is left alone. Zeroing its only (even) index
+    would clear the whole mask, so a one-layer reconstruction would return no
+    coordinates at all.
+    """
+    for axis in range(sparse_mask.ndim):
+        if sparse_mask.shape[axis] > 1:
+            index = [slice(None)]*sparse_mask.ndim
+            index[axis] = slice(None, None, 2)
+            sparse_mask[tuple(index)] = 0
+
+
 def generate_low_confidence_test_coordinates(starting_reconstruction, confidence_threshold=0.5, how_sparse=0, errode_free_surface=1):
     # Data path must point to a npz save of either a merged volume or single volume
     # Within this file there MUST be:
@@ -649,9 +663,7 @@ def generate_low_confidence_test_coordinates(starting_reconstruction, confidence
         print('Returning all voxels under the confidence threshold')
     elif how_sparse == 1:
         # Some sparcing applied
-        sparse_mask[::2, :, :] = 0
-        sparse_mask[:, ::2, :] = 0
-        sparse_mask[:, :, ::2] = 0
+        _thin_every_other_voxel(sparse_mask)
         sparse_mask = scipy.ndimage.binary_dilation(sparse_mask, structure=np.array([[[1, 0, 1], [0, 0, 0], [1, 0, 1]],
                                                                                      [[0, 0, 0], [0, 1, 0], [
                                                                                          0, 0, 0]],
@@ -659,9 +671,7 @@ def generate_low_confidence_test_coordinates(starting_reconstruction, confidence
         print('Returning most voxels under the confidence threshold')
     elif how_sparse == 2:
         # More sparcing applied
-        sparse_mask[::2, :, :] = 0
-        sparse_mask[:, ::2, :] = 0
-        sparse_mask[:, :, ::2] = 0
+        _thin_every_other_voxel(sparse_mask)
         print('Returning some voxels under the confidence threshold')
 
     # Scatter shot low confidence map
