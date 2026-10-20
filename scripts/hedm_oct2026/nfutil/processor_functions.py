@@ -16,12 +16,12 @@ import skimage
 import tempfile
 import timeit
 from hexrd import rotations
-from hexrd import xrdutil
 from hexrd.transforms import xfcapi
 from scipy.ndimage import gaussian_filter
 from scipy.ndimage import median_filter
 
 from .data_io import _load_images
+from .simulation import simulate_angles
 
 def make_chunks(n_items, ncpus, chunk_size=-1):
     """Split ``n_items`` into contiguous chunks for the multiprocessing pool.
@@ -217,11 +217,16 @@ def _pattern_search_refine(start_exp_map, cost, radii_deg, max_recenters=100):
     to the next, smaller radius. A pass that does not improve on the previous
     one is discarded.
 
+    A point is never scored twice: the center of every grid is the current best
+    orientation, whose cost is already known, and a pass whose best point is
+    the center is the last one at that radius, since the next would score the
+    same grid again. The result is the same as scoring all 27 points every time.
+
     ``cost`` takes an (n, 3) array of exp-maps and returns n confidences.
     Returns ``exp_map, confidence`` of the best orientation found.
     """
     exp_map = np.asarray(start_exp_map, dtype=float)
-    confidence = 0.0
+    confidence = None    # cost of exp_map, once it has been scored
     for mis in radii_deg:
         mis_amt = np.radians(mis)
         # Create a linup of the orientations to go on either side
@@ -229,8 +234,16 @@ def _pattern_search_refine(start_exp_map, cost, radii_deg, max_recenters=100):
         XsO, YsO, ZsO = np.meshgrid(ori_pts, ori_pts, ori_pts)  # Make that 3D
         grid0 = np.vstack(
             [XsO.flatten(), YsO.flatten(), ZsO.flatten()]).T  # Re-arange
+        center = int(np.where((grid0 == 0.).all(axis=1))[0][0])
+        others = np.arange(len(grid0)) != center
         for counter in range(max_recenters):
-            all_confidence = cost(grid0 + exp_map)
+            trial = grid0 + exp_map
+            if confidence is None:
+                all_confidence = np.asarray(cost(trial), dtype=float)
+            else:
+                all_confidence = np.empty(len(grid0))
+                all_confidence[others] = cost(trial[others])
+                all_confidence[center] = confidence
             # Grab just the first instance if there is a tie
             idx = np.argmax(all_confidence)
             # The first pass at each radius is always taken. Later passes
@@ -239,6 +252,8 @@ def _pattern_search_refine(start_exp_map, cost, radii_deg, max_recenters=100):
                 break
             exp_map = grid0[idx] + exp_map
             confidence = all_confidence[idx]
+            if idx == center:
+                break    # the next pass would score the same grid again
     return exp_map, confidence
 
 
@@ -281,60 +296,11 @@ def _test_single_orientation_at_single_coordinate(experiment, image_stack, coord
         # Unpack the precomputed orientation data
         original_exp_map = orientation_data_to_test[0]
         very_original_exp_map = orientation_data_to_test[0]
-        # Grab some experiment data
-        # Packaged information about the material and HKLs
-        plane_data = experiment.plane_data
-        # Detector tilts, position, as well as stage position and chi [?,mm,mm,chi]
-        detector_params = experiment.detector_params
-        pixel_size = experiment.pixel_size  # Pixel size (mm)
-        # Start and stop omega position of image stack (rad)
-        ome_range = experiment.ome_range
-        # Defined omega period for HEXRD to work in (rad)
-        ome_period = experiment.ome_period
-        tD = experiment.tVec_d  # Detector X,Y,Z translation (mm)
-        rD = experiment.rMat_d  # Detector rotation matrix (rad)
-        tS = experiment.tVec_s  # Sample X,Y,Z translation (mm)
-        # Physical position of (0,0) pixel at omega = 0 [X,Y,omega] = [mm,mm,rad]
-        base = experiment.base
-        # 1 over step size along X,Y,omega in image stack [1/mm,1/mm/,1/rad]
-        inv_deltas = experiment.inv_deltas
-        clip_vals = experiment.clip_vals  # Number of pixels along X,Y [mm,mm]
-        # Beam stop parameters [vertical center,width] [mm,mm]
-        bsp = experiment.bsp
-        # Omega start stop positions for each frame in image stack
-        ome_edges = experiment.ome_edges
-        # Pixels near the edge of the detector to avoid
-        panel_dims_expanded = [(-10, -10), (10, 10)]
-        # Assume grain is unstrained
-        ref_gparams = np.array([0., 0., 0., 1., 1., 1., 0., 0., 0.])
 
         def cost(trial_exp_maps):
             # Confidence of each trial orientation at the coordinate point
-            confidences = np.zeros(trial_exp_maps.shape[0])
-            for i, exp_map in enumerate(trial_exp_maps):
-                # Transform exp_map to rotation matrix
-                rMat_c = xfcapi.make_rmat_of_expmap(exp_map)
-                # Define all parameters for the orientation (strain and orientation)
-                gparams = np.hstack([exp_map, ref_gparams])
-                # Simulate the the diffraction events
-                sim_results = xrdutil.simulateGVecs(plane_data, detector_params, gparams, panel_dims=panel_dims_expanded,
-                                                    pixel_pitch=pixel_size, ome_range=ome_range, ome_period=ome_period,
-                                                    distortion=None)
-                # Pull just the angles for each g-vector
-                angles = sim_results[2]
-                # Calculate the sample rotation matrix
-                rMat_ss = xfcapi.make_sample_rmat(
-                    experiment.chi, angles[:, 2])
-                # Convert the angles to g-vectors
-                gvec_cs = xfcapi.angles_to_gvec(
-                    angles, chi=experiment.chi, rmat_c=rMat_c)
-                # Find where those g-vectors intercept the detector from our coordinate point
-                det_xy = xfcapi.gvec_to_xy(
-                    gvec_cs, rD, rMat_ss, rMat_c, tD, tS, coord_to_test)
-                # Check xy detector positions and omega value to see if intensity exisits
-                confidences[i] = _quant_and_clip_confidence(det_xy, angles[:, 2], image_stack,
-                                                            base, inv_deltas, clip_vals, bsp, ome_edges)
-            return confidences
+            return _orientation_confidences(
+                experiment, image_stack, coord_to_test, trial_exp_maps)
 
         exp_map, confidence = _pattern_search_refine(
             original_exp_map, cost, REFINEMENT_RADII_DEG)
@@ -710,31 +676,11 @@ def _precompute_diffraction_data_of_single_orientation(experiment, exp_map):
     """
     # Handle incoming size of exp_map
     exp_map = np.squeeze(exp_map)
-    # Grab some experiment data
-    # Packaged information about the material and HKLs
-    plane_data = experiment.plane_data
-    # Detector tilts, position, as well as stage position and chi [?,mm,mm,chi]
-    detector_params = experiment.detector_params
-    pixel_size = experiment.pixel_size  # Pixel size (mm)
-    # Start and stop omega position of image stack (rad)
-    ome_range = experiment.ome_range
-    # Defined omega period for HEXRD to work in (rad)
-    ome_period = experiment.ome_period
-    # Pixels near the edge of the detector to avoid
-    panel_dims_expanded = [(-10, -10), (10, 10)]
-    # Assume grain is unstrained
-    ref_gparams = np.array([0., 0., 0., 1., 1., 1., 0., 0., 0.])
 
     # Transform exp_map to rotation matrix
     rMat_c = xfcapi.make_rmat_of_expmap(exp_map)
-    # Define all parameters for the orientation (strain and orientation)
-    gparams = np.hstack([exp_map, ref_gparams])
-    # Simulate the the diffraction events
-    sim_results = xrdutil.simulateGVecs(plane_data, detector_params, gparams, panel_dims=panel_dims_expanded,
-                                        pixel_pitch=pixel_size, ome_range=ome_range, ome_period=ome_period,
-                                        distortion=None)
-    # Pull just the angles for each g-vector
-    angles = sim_results[2]
+    # Simulate the the diffraction events and pull just the angles for each g-vector
+    angles = simulate_angles(experiment, exp_map, rMat_c)
     # Calculate the sample rotation matrix
     rMat_ss = xfcapi.make_sample_rmat(experiment.chi, angles[:, 2])
     # Convert the angles to g-vectors
@@ -770,20 +716,6 @@ def _precompute_diffraction_data_of_many_orientations(experiment, exp_maps, star
                 Will be of shape (n_oris,3,3)
     """
 
-    # Grab some experiment data
-    # Packaged information about the material and HKLs
-    plane_data = experiment.plane_data
-    # Detector tilts, position, as well as stage position and chi [?,mm,mm,chi]
-    detector_params = experiment.detector_params
-    pixel_size = experiment.pixel_size  # Pixel size (mm)
-    # Start and stop omega position of image stack (rad)
-    ome_range = experiment.ome_range
-    # Defined omega period for HEXRD to work in (rad)
-    ome_period = experiment.ome_period
-    # Pixels near the edge of the detector to avoid
-    panel_dims_expanded = [(-10, -10), (10, 10)]
-    # Assume grain is unstrained
-    ref_gparams = np.array([0., 0., 0., 1., 1., 1., 0., 0., 0.])
 
     # How many orientations do we have?
     if start == 0 and stop == 0:
@@ -806,14 +738,8 @@ def _precompute_diffraction_data_of_many_orientations(experiment, exp_maps, star
         exp_map = exp_maps[i]
         # Transform exp_map to rotation matrix
         rMat_c = xfcapi.make_rmat_of_expmap(exp_map.T)
-        # Define all parameters for the orientation (strain and orientation)
-        gparams = np.hstack([exp_map, ref_gparams])
-        # Simulate the the diffraction events
-        sim_results = xrdutil.simulateGVecs(plane_data, detector_params, gparams, panel_dims=panel_dims_expanded,
-                                            pixel_pitch=pixel_size, ome_range=ome_range, ome_period=ome_period,
-                                            distortion=None)
-        # Pull just the angles for each g-vector
-        angles = sim_results[2]
+        # Simulate the the diffraction events and pull just the angles for each g-vector
+        angles = simulate_angles(experiment, exp_map, rMat_c)
         # Calculate the sample rotation matrix
         rMat_ss = xfcapi.make_sample_rmat(experiment.chi, angles[:, 2])
         # Convert the angles to g-vectors

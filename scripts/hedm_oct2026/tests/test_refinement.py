@@ -55,5 +55,98 @@ class TestPatternSearchRefine(unittest.TestCase):
         self.assertEqual(len(calls), 2 * len(RADII))
 
 
+def old_pattern_search_refine(start_exp_map, cost, radii_deg, max_recenters=100):
+    """The pattern search as it was before points stopped being scored twice."""
+    exp_map = np.asarray(start_exp_map, dtype=float)
+    confidence = 0.0
+    for mis in radii_deg:
+        mis_amt = np.radians(mis)
+        ori_pts = np.array([-mis_amt, 0., mis_amt])
+        XsO, YsO, ZsO = np.meshgrid(ori_pts, ori_pts, ori_pts)
+        grid0 = np.vstack([XsO.flatten(), YsO.flatten(), ZsO.flatten()]).T
+        for counter in range(max_recenters):
+            all_confidence = cost(grid0 + exp_map)
+            idx = np.argmax(all_confidence)
+            if counter > 0 and all_confidence[idx] <= confidence:
+                break
+            exp_map = grid0[idx] + exp_map
+            confidence = all_confidence[idx]
+    return exp_map, confidence
+
+
+class TestPatternSearchSavesWork(unittest.TestCase):
+    """Same answer as before, with fewer orientations scored."""
+
+    def costs(self):
+        rng = np.random.default_rng(0)
+        for _ in range(8):
+            target = rng.normal(scale=0.05, size=3)
+            yield bowl(target)
+        # Flat stretches and ties, where which point wins depends on the order
+        yield lambda t: np.round(1.0 - np.linalg.norm(t - 0.01, axis=1), 2)
+        yield lambda t: np.ones(len(t))
+        # Noisy, but a fixed value at each point
+        def noisy(t):
+            return np.array([0.5 + 0.1*np.sin(1e4*x.sum()) - np.linalg.norm(x) for x in t])
+        yield noisy
+
+    def test_same_result_as_scoring_every_point_every_time(self):
+        rng = np.random.default_rng(1)
+        for cost in self.costs():
+            start = rng.normal(scale=0.1, size=3)
+            new = _pattern_search_refine(start, cost, RADII)
+            old = old_pattern_search_refine(start, cost, RADII)
+            np.testing.assert_array_equal(new[0], old[0])
+            self.assertEqual(new[1], old[1])
+
+    def test_fewer_orientations_are_scored(self):
+        # Refining an FF orientation starts about 0.1 degrees from where it ends up
+        rng = np.random.default_rng(2)
+        start = np.array([0.02, -0.01, 0.03])
+        ratios = []
+        for _ in range(10):
+            cost = bowl(start + rng.normal(scale=0.002, size=3))
+            scored = {'new': 0, 'old': 0}
+
+            def counting(key):
+                def f(trial):
+                    scored[key] += len(trial)
+                    return cost(trial)
+                return f
+            _pattern_search_refine(start, counting('new'), RADII)
+            old_pattern_search_refine(start, counting('old'), RADII)
+            self.assertLess(scored['new'], scored['old'])
+            ratios.append(scored['new']/scored['old'])
+        # About half: the second pass at each radius is skipped when nothing moved
+        self.assertLess(np.mean(ratios), 0.6)
+
+    def test_never_scores_more_than_before(self):
+        # Including searches that keep moving, ties and flat costs
+        start = np.array([0.02, -0.01, 0.03])
+        for cost in self.costs():
+            scored = {'new': 0, 'old': 0}
+
+            def counting(key):
+                def f(trial):
+                    scored[key] += len(trial)
+                    return cost(trial)
+                return f
+            _pattern_search_refine(start, counting('new'), RADII)
+            old_pattern_search_refine(start, counting('old'), RADII)
+            self.assertLessEqual(scored['new'], scored['old'])
+
+    def test_no_point_is_scored_twice_in_a_pass(self):
+        seen = []
+
+        def cost(trial):
+            seen.extend(map(tuple, trial))
+            return 1.0 - np.linalg.norm(trial - 0.03, axis=1)
+        _pattern_search_refine(np.zeros(3), cost, RADII)
+        # re-centering overlaps neighbouring grids, so some points repeat, but
+        # the center of a grid (the current best) is never scored again at its
+        # own radius
+        self.assertLess(len(seen), 27*len(RADII)*2)
+
+
 if __name__ == '__main__':
     unittest.main()
