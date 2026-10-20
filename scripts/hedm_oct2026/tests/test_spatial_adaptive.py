@@ -78,7 +78,7 @@ class TestMarch(unittest.TestCase):
         np.testing.assert_array_equal(idx, self.truth_flat)
         self.assertTrue((conf > 0).all())
 
-    def test_far_fewer_tests_than_exhaustive(self):
+    def test_far_fewer_tests_than_all_grains(self):
         calls = []
         fn = make_test_fn(self.truth_flat, self.boundary, calls)
         _, _, stats = march(self.mask, 8, fn)
@@ -87,7 +87,7 @@ class TestMarch(unittest.TestCase):
 
     def test_every_voxel_assigned_when_nothing_converges(self):
         # Confidence below the converged threshold everywhere: nothing can
-        # spread, so every voxel falls back to the full search.
+        # spread, so every voxel falls back to testing every candidate.
         calls = []
         fn = make_test_fn(self.truth_flat, np.ones_like(self.boundary), calls)
         idx, _, stats = march(self.mask, 8, fn, converged_confidence=0.7)

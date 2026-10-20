@@ -3,7 +3,7 @@
 Two datasets, with and without a tomography mask. Each runs the same steps as
 nf_hedm/reconstruct_nf.py in-process (without saving) and compares the grain
 and confidence maps against a stored reference, then compares the spatially
-adaptive reconstruction against the exhaustive one.
+adaptive reconstruction against testing every FF grain at every voxel.
 
 The references record what the code produced when they were saved. They catch
 unintended changes, they are not a measurement of the true microstructure.
@@ -38,7 +38,7 @@ class ReconstructionCases:
     # Config file (relative to the data folder, or absolute) and reference
     config = None
     reference = None
-    # Spatially adaptive thresholds: fraction of the exhaustive orientation
+    # Spatially adaptive thresholds: fraction of the all-grains orientation
     # tests it may use, fraction of voxels within 0.05 of the best confidence,
     # and fraction of voxels that must pick the same grain
     max_test_fraction = None
@@ -77,17 +77,17 @@ class ReconstructionCases:
         np.testing.assert_allclose(
             self.confidence_map, ref['confidence_map'], atol=1e-12)
 
-    def test_spatially_adaptive_agrees_with_exhaustive(self):
+    def test_spatially_adaptive_agrees_with_all_grains(self):
         import nfutil
 
         _, conf, idx, stats = nfutil.reconstruct_spatially_adaptive(
             self.experiment, self.controller, self.experiment.image_stack,
             self.precomputed, self.coords, self.mask)
 
-        # Far fewer orientation tests than the exhaustive search
+        # Far fewer orientation tests than testing every grain at every voxel
         self.assertLess(stats['n_tests'],
-                        self.max_test_fraction*stats['n_exhaustive_tests'])
-        # Exhaustive is the optimum over the same candidates
+                        self.max_test_fraction*stats['n_all_grains_tests'])
+        # Testing every grain is the optimum over the same candidates
         self.assertTrue((conf <= self.raw_confidence + 1e-12).all())
         # Several FF grains are near-duplicates, so compare confidence and
         # not grain ids: nearly every voxel is almost as good as the best

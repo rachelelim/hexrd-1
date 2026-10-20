@@ -1,11 +1,13 @@
 """Spatially adaptive (marching) NF reconstruction.
 
 Neighboring voxels in a grain share an orientation, so most voxels do not need
-to be tested against every candidate orientation. A voxel is instead tested
-against only the orientations already found at its neighbors, and falls back
-to the full search where that fails (grain and sample boundaries). This is the
-spatially adaptive extension of Li & Suter, J. Appl. Cryst. (2013), with the
-candidate orientations taken from the FF grain list.
+to be tested against every candidate grain. A voxel is instead tested against
+only the grains already found at its neighbors, and falls back to testing every
+FF grain where that fails (grain and sample boundaries). This is the spatially
+adaptive extension of Li & Suter, J. Appl. Cryst. (2013), with the candidate
+orientations taken from the FF grain list. Nothing outside that list can be
+found: the fallback tests the listed grains, it does not search orientation
+space.
 
 contributing authors: lim37
 """
@@ -58,13 +60,13 @@ def march(mask, n_oris, test_fn, converged_confidence=0.7, drop_off=0.8,
     n_tests)``, testing only the orientations in ``bags[i]`` at voxel
     ``voxel_numbers[i]``.
 
-    1. Seeds on a sparse regular grid are tested against all orientations.
+    1. Seeds on a sparse regular grid are tested against every candidate.
     2. A voxel next to voxels whose confidence reached
        ``converged_confidence`` is tested against only their orientations. It
        is accepted if its confidence is at least ``drop_off`` times the best
        neighbor's, otherwise it is put aside.
     3. When no voxel can be reached, the voxels put aside (and any cut off
-       from the seeds) are tested against all orientations, and the march
+       from the seeds) are tested against every candidate, and the march
        continues from the new converged voxels.
 
     Returns ``idx, confidence, stats`` where idx and confidence are over the
@@ -178,6 +180,6 @@ def reconstruct_spatially_adaptive(experiment, controller, image_stack,
     idx, confidence, stats = march(
         mask, n_oris, test_fn, converged_confidence, drop_off, seed_spacing,
         connectivity)
-    stats['n_exhaustive_tests'] = stats['n_voxels']*n_oris
+    stats['n_all_grains_tests'] = stats['n_voxels']*n_oris
     raw_exp_maps = np.asarray(orientation_data[0]).reshape(n_oris, 3)[idx]
     return raw_exp_maps, confidence, idx, stats

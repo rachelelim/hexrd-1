@@ -94,15 +94,15 @@ parser.add_argument('input_file',
 
 parser.add_argument('--spatially-adaptive', action='store_true',
                     help='Test each voxel against its neighbors\' grains first and only '
-                    'search all grains where that fails (faster, ~97%% of voxels '
-                    'agree with the full search)')
+                    'test every FF grain where that fails (faster; about 97%% of voxels '
+                    'end within 0.05 of the confidence from testing every grain)')
 parser.add_argument('--converged-confidence', type=float, default=0.7,
                     help='Confidence above which a voxel seeds its neighbors')
 parser.add_argument('--drop-off', type=float, default=0.8,
                     help='A neighbor is accepted if its confidence is at least '
                     'this fraction of the voxel it copies from')
 parser.add_argument('--seed-spacing', type=int, default=8,
-                    help='Voxel spacing of the grid searched exhaustively to start')
+                    help='Voxel spacing of the seed grid, whose voxels are tested against every FF grain')
 
 args = parser.parse_args()
 configuration_filepath = args.input_file
@@ -144,10 +144,10 @@ if args.spatially_adaptive:
         experiment, controller, image_stack, precomputed_orientation_data, test_coordinates, mask,
         converged_confidence=args.converged_confidence, drop_off=args.drop_off,
         seed_spacing=args.seed_spacing)
-    print(f"Spatially adaptive reconstruction used {stats['n_tests']} of {stats['n_exhaustive_tests']} "
-          f"orientation tests ({100*stats['n_tests']/stats['n_exhaustive_tests']:.1f}%): "
+    print(f"Spatially adaptive reconstruction used {stats['n_tests']} of {stats['n_all_grains_tests']} "
+          f"orientation tests ({100*stats['n_tests']/stats['n_all_grains_tests']:.1f}%): "
           f"{stats['n_local']} voxels copied from neighbors, "
-          f"{stats['n_seed'] + stats['n_global']} searched over all grains.")
+          f"{stats['n_seed'] + stats['n_global']} tested against every FF grain.")
 else:
     raw_exp_maps, raw_confidence, raw_idx = nfutil.test_orientations_at_coordinates(
         experiment, controller, image_stack, precomputed_orientation_data, test_coordinates, refine_yes_no=0)
