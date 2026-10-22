@@ -48,10 +48,17 @@ scripts where they are and run them in place. The driver already does this.
      "doing the tomography scan";
    - scan `N-2`: dark field and scan `N-1`: bright field (both `flyscan ome 0 10 20 <exposure>`, 21 frames).
    Each scan's `Retiga #0 saved last image to .../retiga_XXXXXX.h5` line gives its image file.
-   The driver warns if the retiga numbers are not consecutive or the dark looks brighter than the bright;
-   override with `--dark` / `--bright`.
-2. **The three `retiga_*.h5` files**, all in one folder (`--tomo-dir`). Dataset `entry/data/data`,
-   one frame per chunk, with `NDAttributes` timestamps.
+   The driver warns if the retiga numbers are not consecutive and stops if the dark looks brighter than the bright.
+2. **The three `retiga_*.h5` files** (dark, bright and tomo; dataset `entry/data/data`, one frame per chunk, with
+   `NDAttributes` timestamps). The driver finds each one, in this order:
+   1. a file given with `--dark`, `--bright` or `--tomo`, used as it is;
+   2. with `--sample-dir`: the retiga file in `<sample-dir>/<scan>/nf/`, for the dark scan (`N-2`), the bright scan
+      (`N-1`) and the tomo scan `N`. For example `--sample-dir /p/vast1/trimet/chess_sep26/lind-4275-b/diamond-1a` and
+      scan `23` look in `.../diamond-1a/21/nf`, `.../22/nf` and `.../23/nf`. The names in the spec log are not needed.
+      If a folder holds several `retiga_*.h5` files, the one named in the spec log is used; if none matches, the
+      driver stops and asks you to use `--dark`, `--bright` or `--tomo`;
+   3. otherwise the file named in the spec log, looked for in `--tomo-dir` (default: the current folder), with a
+      warning if the three retiga numbers are not consecutive.
 3. **A detector yml** (`retiga_e7.yml`): pixel size (0.9 um here) and the rotation-axis column offset
    (`tvec[0]`, 0 here).
 
@@ -68,10 +75,15 @@ python run_tomo_pipeline.py 236 --spec /path/spec.log --detector /path/retiga_e7
 #    interpolate the bad layer ranges and smooth
 python run_tomo_pipeline.py 236 --spec /path/spec.log --detector /path/retiga_e7.yml \
     --tomo-dir /path/tomo --interp 15-17,28-31,63 --stages interp,smooth
+
+# files stored as <sample-dir>/<scan>/nf/retiga_*.h5 (scans 21, 22 and 23 here):
+python run_tomo_pipeline.py 23 --spec /path/spec.log --detector /path/retiga_e7.yml \
+    --sample-dir /p/vast1/trimet/chess_sep26/lind-4275-b/diamond-1a --stages setup,missing,recon,qc
 ```
 
 `--dry-run` prints the commands without running them. A stage is skipped if its output exists;
-add `--force` to redo it. Everything is written to `--run-dir` (default `<tomo-dir>/run_scan<N>`).
+add `--force` to redo it. Everything is written to `--run-dir` (default `<tomo-dir>/run_scan<N>`, so `./run_scan<N>`
+with `--sample-dir`).
 `--layers 52` reconstructs a single layer (`qc` and `interp` need all 70 and are skipped).
 
 ## Stages
@@ -251,6 +263,7 @@ python smooth_masks.py in.npz out_smooth.npz 1.5
 | `OSError: ... can't open directory .../hdf5/plugin` | Install `hdf5plugin` in the environment. |
 | `ModuleNotFoundError: nfutil` | Run `process_tomo_clean.py` in place (not a copy elsewhere); it looks for `nfutil` in the parent folder. |
 | "dark and bright look swapped" | Check which scans are dark/bright; pass `--dark` / `--bright`. |
+| `retiga_*.h5 files in ... and the spec log does not say which` | Several files in a scan folder; pass `--dark`, `--bright` or `--tomo`. |
 | Broken or C-shaped rings in some layers | Bright-field clipping at 4095; see Quality control. |
 | Mask is mostly speckle | The layer rows are outside the beam: check `--vert-beam-center` and `v_bnds` against a radiograph. |
 | Reconstruction needs far too much memory | Use the streaming path (h5 only); TIFF stacks still load in full. |

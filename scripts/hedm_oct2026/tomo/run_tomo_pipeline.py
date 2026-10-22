@@ -2,7 +2,8 @@
 """Tomography mask pipeline for one spec scan.
 
     python run_tomo_pipeline.py SCAN --spec SPEC.LOG --detector DETECTOR.yml [options]
-    (run with the hexrdgui_pr_Oct2026 python; the retiga_*.h5 files are looked up in --tomo-dir, default: cwd)
+    (run with the hexrdgui_pr_Oct2026 python; the retiga_*.h5 files are looked up in --tomo-dir, default: cwd, or,
+    with --sample-dir, in <sample-dir>/<scan>/nf/ for the dark (SCAN-2), bright (SCAN-1) and tomo (SCAN) scans)
 
 Stages (run in this order; a stage is skipped if its output exists, unless --force):
   setup   find dark/bright/tomo files from spec.log, write <run-dir>/tomo_config.yml (from tomo_config.yml here)
@@ -14,6 +15,7 @@ Stages (run in this order; a stage is skipped if its output exists, unless --for
 
 Typical use:
   python run_tomo_pipeline.py 236 --spec spec.log --detector retiga_e7.yml --tomo-dir . --stages setup,missing,recon,qc
+  python run_tomo_pipeline.py 23 --spec spec.log --detector retiga_e7.yml --sample-dir /p/vast1/trimet/chess_sep26/lind-4275-b/diamond-1a
   python run_tomo_pipeline.py 236 --spec spec.log --detector retiga_e7.yml --tomo-dir . --interp 15-17,28-31,63 --stages interp,smooth
 """
 import argparse, json, re, subprocess, sys
@@ -61,21 +63,42 @@ def spec_step(scan):
     return None
 
 
+def find_in_scan_dir(sample_dir, scan_number, role, spec_name=None):
+    """The retiga h5 file of a scan in <sample_dir>/<scan>/nf/ (the one named in the spec log if there are several)."""
+    folder = Path(sample_dir) / str(scan_number) / 'nf'
+    if not folder.is_dir(): sys.exit(f'{role}: {folder} does not exist (--sample-dir {sample_dir}, scan {scan_number})')
+    files = sorted(folder.glob('retiga_*.h5'))
+    if spec_name and (folder / spec_name).exists(): return folder / spec_name
+    if len(files) == 1: return files[0]
+    if not files: sys.exit(f'{role}: no retiga_*.h5 file in {folder}')
+    sys.exit(f'{role}: {len(files)} retiga_*.h5 files in {folder} ({", ".join(f.name for f in files)}) and the spec log '
+             f'does not say which; use --{role}')
+
+
 def locate(args, scans):
-    """(dark, bright, tomo) retiga h5 paths for the tomo scan, checked against the spec log."""
+    """(dark, bright, tomo) retiga h5 paths for the tomo scan.
+
+    The dark is scan - 2 and the bright is scan - 1. A file given with --dark, --bright or --tomo is used as it is.
+    Otherwise, with --sample-dir, each is the retiga file in <sample-dir>/<scan>/nf/; without it, each is the file named
+    in the spec log, looked for in --tomo-dir (and the numbers are checked against the log).
+    """
     s = scans[args.scan]
     if not s.is_tomo: log(f'WARNING: scan {args.scan} was not preceded by the "doing the tomography scan" note')
-    num = lambda sc: int(re.search(r'retiga_(\d+)', sc.retiga_file).group(1))
+    given = {'dark': getattr(args, 'dark', None), 'bright': getattr(args, 'bright', None), 'tomo': getattr(args, 'tomo', None)}
+    sample_dir = getattr(args, 'sample_dir', None)
     names = {}
     for role, n in (('dark', args.scan - 2), ('bright', args.scan - 1), ('tomo', args.scan)):
+        if given[role]:
+            names[role] = Path(given[role]); continue
         sc = scans.get(n)
-        if sc is None or not sc.retiga_file:
-            sys.exit(f'scan {n} ({role}) has no retiga file in spec.log')
-        names[role] = Path(args.tomo_dir) / (Path(sc.retiga_file).name)
-    if not (num(scans[args.scan - 2]) + 1 == num(scans[args.scan - 1]) and num(scans[args.scan - 1]) + 1 == num(s)):
-        log('WARNING: dark/bright/tomo retiga numbers are not consecutive; check --dark/--bright overrides')
-    for k in ('dark', 'bright'):
-        if getattr(args, k): names[k] = Path(getattr(args, k))
+        spec_name = Path(sc.retiga_file).name if sc is not None and sc.retiga_file else None
+        if sample_dir: names[role] = find_in_scan_dir(sample_dir, n, role, spec_name)
+        elif spec_name: names[role] = Path(args.tomo_dir) / spec_name
+        else: sys.exit(f'scan {n} ({role}) has no retiga file in spec.log')
+    if not sample_dir and not any(given.values()):
+        num = lambda sc: int(re.search(r'retiga_(\d+)', sc.retiga_file).group(1))
+        if not (num(scans[args.scan - 2]) + 1 == num(scans[args.scan - 1]) and num(scans[args.scan - 1]) + 1 == num(s)):
+            log('WARNING: dark/bright/tomo retiga numbers are not consecutive; check --dark/--bright overrides')
     missing = [str(p) for p in names.values() if not p.exists()]
     if missing and not args.dry_run: sys.exit('h5 file(s) not found: ' + ', '.join(missing))
     return names
@@ -205,7 +228,9 @@ def main():
     ap.add_argument('--template-dir', default=str(HERE), help='folder with process_tomo_clean.py, tomoutil_REL.py, tomo_config.yml')
     ap.add_argument('--template-config', default=None)
     ap.add_argument('--detector', required=True, help='detector yml, e.g. retiga_e7.yml')
-    ap.add_argument('--dark'); ap.add_argument('--bright')
+    ap.add_argument('--sample-dir', default=None, help='sample folder with one folder per scan: the dark, bright and tomo files are '
+                    '<sample-dir>/<scan>/nf/retiga_*.h5 for scans SCAN-2, SCAN-1 and SCAN (used instead of --tomo-dir)')
+    ap.add_argument('--dark'); ap.add_argument('--bright'); ap.add_argument('--tomo', help='the tomo h5 file, if not the one that would be found')
     ap.add_argument('--vbnds', type=float, nargs=2, default=[-0.35, 0.35])
     ap.add_argument('--vert-beam-center', type=float, default=0.0, help='mm; 0 = beam at detector center')
     ap.add_argument('--layers', type=int, nargs='+', default=None, help='reconstruct only these layers (qc/interp/smooth need the full set)')
