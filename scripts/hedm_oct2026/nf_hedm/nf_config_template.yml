@@ -76,7 +76,9 @@ NF_images:
 
 
 NF_reconstruction:
-  # The grid: x_length by z_length centered at (x_center, z_center), at voxel_spacing, over desired_vertical_span
+  # The grid, used when there is NO tomography mask (see below): x_length by z_length centered at (x_center, z_center),
+  # at voxel_spacing, over desired_vertical_span. Every voxel of this box is reconstructed, including any air around the
+  # sample. With a mask, the layers, the voxel size and the x/z grid come from the mask and these four settings are ignored.
   voxel_spacing: 0.005 # [required] mm - cubic voxel size
   x_center: 0.
   z_center: 0.
@@ -85,7 +87,9 @@ NF_reconstruction:
   desired_vertical_span: [-0.025, 0.025] # mm from the NF beam center; default: experiment: beam_vertical_span.
                                          # A mask layer is used if its height plus the vertical offset is inside it.
 
-  # Tomography mask: restricts the reconstruction to the sample. Leave this section out to reconstruct the whole grid.
+  # Tomography mask: a map of where the sample is, from `hexrd tomo reconstruct`. With it, only the sample voxels are
+  # reconstructed (faster, and no grains fitted to empty space), and the layers, voxel size and x/z grid come from the mask.
+  # Without it, the whole box set above is reconstructed: delete this section, or leave mask_filepath empty.
   tomography:
     mask_filepath: /path/to/tomo_mask.npz # *_tomo_mask.npz from `hexrd tomo reconstruct`
 
