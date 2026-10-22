@@ -1,0 +1,119 @@
+# Template config for the NF-HEDM scripts (nf_config format, read by hexrd.hedm.nf_config).
+#
+# This is the minimal config for the usual workflow: h5 images, a tomography mask, and the gaussian cleaning routine.
+# The commented blocks are the alternatives; uncomment one to use it.
+#
+# Run options (spatially adaptive reconstruction, refinement, the boundary pass) are command-line flags of
+# reconstruct_nf.py and reconstruct_and_refine_nf.py, not config.
+#
+# A bare None is read as a missing value. Keys marked [required] have no default.
+
+analysis_name: my_sample_S0_L0 # Stem of every output file (grain map, confidence map, packaged images, ...)
+
+main_directory: "./" # Relative input files are looked for here; None = the working directory
+output_directory: "./" # Where outputs are written; None = main_directory
+
+output_plot_check: False # True shows plots while the scripts run
+
+
+input_files:
+  detector_file: "nf_detector_retiga_e7.yml" # [required] hexrd instrument yml of the NF detector
+  materials_file: "../../materials.h5" # [required] hexrd materials .h5 containing experiment: material_name
+  grains_out_file: "./grains.out" # [required] FF grains (orientations and positions); the reconstruction tests these
+
+
+experiment:
+  beam_energy: 61.332 # [required] keV
+  beam_vertical_span: [-0.135, 0.135] # [required] mm - vertical extent of the beam from its center;
+                                      # desired_vertical_span below defaults to this
+  material_name: my_material # [required] name of the material in materials_file
+  # max_tth: 20 # degrees; default: the largest 2theta on the detector
+
+  # FF grains used: completeness > comp_thresh and chi2 < chi2_thresh (numbers in (0, 1])
+  comp_thresh: 0.5
+  chi2_thresh: 0.5
+
+  images_and_omegas:
+    omega_correction: 0 # degrees - shifts the images through omega, positive or negative
+    # omega_start: 0.0 # degrees - only for the 'direct' style, or 'h5' without omega_starts
+    # omega_stop: 360.0
+
+
+NF_images:
+  sample_raw_data_folder: "/path/to/sample" # [required] folder with one folder per scan: <folder>/<scan>/nf/
+
+  image_loading:
+    style: h5 # [required] h5, par or direct
+
+    # style h5: load <sample_raw_data_folder>/<scan>/nf/*.h5 for each scan in data_folders
+    data_folders: [33, 34, 35, 36] # scan numbers of this layer (the quarter-turn scans share one vertical position)
+    omega_starts: [0, 90, 180, 270] # degrees, one per scan
+    omega_stops: [90, 180, 270, 360]
+    nframes_per_folder: 360 # frames in each scan's file
+
+    # style par: find the scans whose metadata (.par and .json files) have this vertical position
+    # json_and_par_starter: "id3a-rams2_nf*" # start of the metadata file names
+    # vertical_motor_name: "ramsz" # column of the metadata with the vertical position
+    # target_vertical_position: 0.35 # mm - the layer to load
+
+    # style direct: numbered image files
+    # stem: "nf_" # file name prefix
+    # stem_digits: 6 # zero-padded digits of the image number
+    # img_start: 0
+    # goodstarts: [0, 0, 0, 0] # first good image number in each data folder
+
+  processing: # image cleaning
+    omega_kernel_size: 50 # frames - the dynamic darkfield is made over this window (10 degrees' worth is a good start)
+    threshold: 0 # global threshold, applied as an integer on top of the darkfield
+    small_object_size: 200 # pixels - remove binary objects smaller than this; 0 removes nothing
+    dilate_omega: 1 # 0 or 1 - dilate the binarized stack along omega
+
+    routine_choice: 0 # 0 = gaussian blur, 1 = erosion/dilation, 2 = non-local means
+    sigma: 1.5 # routine 0: larger values blur the images quickly
+    gaussian_binarization_threshold: 1.0 # routine 0: images are floats when this is applied
+    # routine 1: num_errosions: 2, num_dilations: 3, erosion_dilation_binarization_threshold: 6
+    # routine 2: patch_size: 3, patch_distance: 5, NLM_binarization_threshold: 10
+
+
+NF_reconstruction:
+  # The grid: x_length by z_length centered at (x_center, z_center), at voxel_spacing, over desired_vertical_span
+  voxel_spacing: 0.005 # [required] mm - cubic voxel size
+  x_center: 0.
+  z_center: 0.
+  x_length: 1.3 # mm
+  z_length: 1.3 # mm
+  desired_vertical_span: [-0.025, 0.025] # mm from the NF beam center; default: experiment: beam_vertical_span.
+                                         # A mask layer is used if its height plus the vertical offset is inside it.
+
+  # Tomography mask: restricts the reconstruction to the sample. Leave this section out to reconstruct the whole grid.
+  tomography:
+    mask_filepath: /path/to/tomo_mask.npz # *_tomo_mask.npz from `hexrd tomo reconstruct`
+
+    # Vertical offset between the mask and this NF layer: (ramsz of the NF scan) - (ramsz of the tomography scan, saved
+    # in the mask); positive ramsz moves the sample up. Computed from the spec log, so give the log and any NF scan of
+    # the layer (any of data_folders). `hexrd tomo offset <spec.log> <tomography scan> <NF scan>` prints the number.
+    spec_log: /path/to/spec.log
+    nf_scan: 33
+    # Used as it is (mm, added to the mask heights) only if the spec log cannot be used (no spec_log or nf_scan, a mask
+    # made before ramsz was recorded, or no position for the scan in the log):
+    # vertical_motor_position: 0.0
+
+  beam_stop: # the beam stop is made from these two values (or give beam_stop_filepath: a saved mask, .npy)
+    beam_stop_vertical_center: -1.2375 # mm - measured from the origin of the detector parameters
+    beam_stop_vertical_span: 1.2 # mm - total vertical size of the beam stop
+
+  # Only for find_missing_grains.py (see find_missing_grains.md). All of these keys must be set if the section is present.
+  # missing_grains:
+  #   reconstructed_data_path: "./my_sample_S0_L0_grain_map_data.npz" # the reconstruction to look in
+  #   confidence_threshold: 0.7 # voxels below this are searched
+  #   low_confidence_sparsing: 1 # 0 takes every low-confidence voxel, 1 about half, 2 about a quarter
+  #   errode_free_surface: 1 # 1 removes the free surface of the mask from the search (NF is poor there)
+  #   coord_cutoff_scale: 0.05 # stop when this fraction of the voxels is left
+  #   iter_cutoff: 20 # stop after this many misses in a row
+  #   re_run_and_save: 0 # 1 runs the reconstruction again with the grains found, and saves it
+  #   ori_grid_spacing: 1.0 # degrees - orientation grid of the legacy search only (--legacy)
+
+
+multiprocessing:
+  num_cpus: -1 # all = os.cpu_count(), half = os.cpu_count()/2 (default), negative = os.cpu_count() - n, positive = n
+  chunk_size: -1 # -1 = chosen automatically
