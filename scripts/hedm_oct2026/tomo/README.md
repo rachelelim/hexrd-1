@@ -217,6 +217,10 @@ vertical_motor_position = ramsz_nf - ramsz_tomo = -0.175 mm
 NF vertical span [-0.025, 0.025) uses 5 mask layer(s): positions [50, 51, 52, 53, 54], ...
 ```
 
+For stitching the layers (`stitch_nf_v3_dream3d.py`), `layer_motor_positions` in `stitch_config.yml` are each layer's own `ramsz`
+(the "NF scan N: ramsz" line above), not this offset: the stitching subtracts the value from the layer's heights to put all layers
+in one sample frame.
+
 `--span` is the NF `desired_vertical_span`. If no mask layer falls inside it, the command says the mask does not cover the NF layer.
 A tomography scan covers the NF layers within about its beam height: scan 23 (`ramsz +0.35`, 0.7 mm tall) covers the NF
 layers at `ramsz` 0 to +0.7 (scans 85 to 140), and the layers at negative `ramsz` need the mask of scan 20 (`ramsz -0.35`).

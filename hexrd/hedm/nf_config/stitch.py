@@ -20,8 +20,9 @@ class StitchConfig(Config):
 
     @property
     def layer_motor_positions(self):
-        # One per layer, in stacking order. Each is the
-        # NF_reconstruction:tomography:vertical_motor_position of that layer
+        # One per layer, in stacking order. Each is that layer's own vertical sample stage
+        # position (ramsz, mm), which the stitching subtracts from the layer's heights. It is
+        # not the vertical offset of the layer from the spec log (ramsz_nf - ramsz_tomography)
         return list(self._cfg.get('stitch:layer_motor_positions'))
 
     @property

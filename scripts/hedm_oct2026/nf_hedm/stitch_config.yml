@@ -17,9 +17,12 @@ stitch:
   layer_directory: "/usr/workspace/lim37/ER-disloc/voisin-4783-b/brass-ht-s1-1/NF"
   layer_stem: "brass_S0_L%d"
 
-  # One entry per layer, in the order the layers are stacked (L0, L1, ...).
-  # Each is the NF_reconstruction:tomography:vertical_motor_position of that layer's NF config.
-  # The number of layers is the number of entries.
+  # One entry per layer, in the order the layers are stacked (L0, L1, ...). The number of layers is the number of entries.
+  # Each is that layer's own vertical sample stage position (ramsz, mm): the stitching subtracts it from the layer's
+  # heights to put every layer in one sample frame. Take it from the spec log: `hexrd tomo offset` prints it as
+  # "NF scan N: ramsz ...". It is NOT the layer's vertical offset from the spec log (ramsz of the NF scan minus ramsz of
+  # the tomography scan), which differs from it by the tomography scan's ramsz. The two are the same only when the
+  # tomography scan's ramsz is 0.
   layer_motor_positions: [-0.875, -0.625, -0.375, -0.125, 0.125, 0.375, 0.625, 0.875] # mm
 
   # Tomography mask the layers were reconstructed with, leave empty to not write a mask
