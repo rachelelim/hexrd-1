@@ -3,9 +3,9 @@
 Stages (run in this order; a stage is skipped if its output exists, unless ``force``):
   setup   find the dark, bright and tomo files from the spec log and write <run_dir>/tomo_config.yml
   missing find dropped frames from the h5 timestamps  -> <run_dir>/<retiga>_missing_slots.txt
-  recon   ``tomo_reconstruct.reconstruct`` (spec angles, missing slots, powder removal) -> <name>_tomo_mask.npz
+  recon   ``tomo_reconstruct.reconstruct`` (spec angles, missing slots, powder removal) -> <name>_<step>um_tomo_mask.npz
   qc      per-layer report: fill, layer-to-layer change, bright-field clipping; suggests bad layers
-  interp  interpolate the layer ranges given in ``interp``           -> <name>_tomo_mask_interp.npz
+  interp  interpolate the layer ranges given in ``interp``           -> <name>_<step>um_tomo_mask_interp.npz
   smooth  smooth the (interpolated) mask                              -> ..._smooth.npz
 
 The scan is described by the yml (nf_config format): ``tomography: spec: {log, scan, tomo_dir}``,
@@ -30,7 +30,7 @@ import yaml
 
 from hexrd.hedm import nf_config
 from hexrd.hedm.grainmap.tomo_frames import find_missing_frames
-from hexrd.hedm.grainmap.tomo_options import STAGES, PipelineOptions, ReconstructOptions
+from hexrd.hedm.grainmap.tomo_options import STAGES, PipelineOptions, ReconstructOptions, mask_file_name
 from hexrd.hedm.grainmap.tomo_masks import interpolate_mask_file, parse_ranges, smooth_mask_file
 from hexrd.hedm.grainmap.tomo_reconstruct import load_instrument, reconstruct
 from hexrd.hedm.grainmap.tomo_spec import dropped_slots, parse_spec
@@ -99,11 +99,12 @@ def stage_log(path):
         handler.close()
 
 
-def mask_name(analysis, layers):
+def mask_name(analysis, layers, voxel_spacing):
+    """The name of the mask file that the recon stage writes (see ``tomo_options.mask_file_name``)."""
     if layers is None:
-        return f'{analysis}_tomo_mask.npz'
-    return (f'{analysis}_layer{layers[0]}_tomo_mask.npz' if len(layers) == 1
-            else f'{analysis}_{len(layers)}layers_tomo_mask.npz')
+        return mask_file_name(analysis, voxel_spacing)
+    return mask_file_name(f'{analysis}_layer{layers[0]}' if len(layers) == 1 else f'{analysis}_{len(layers)}layers',
+                          voxel_spacing)
 
 
 def spec_step(scan):
@@ -340,7 +341,9 @@ def run_pipeline(cfg, options=None):
     log('dark', names['dark'].name, '| bright', names['bright'].name, '| tomo', names['tomo'].name, '| run dir', run_dir)
     stem = names['tomo'].stem
     slots_file = run_dir / f'{stem}_missing_slots.txt'
-    maskfile = run_dir / mask_name(analysis, opts.layers)
+    merged = nf_config.utils.merge_dicts(yaml.safe_load(DEFAULT_CONFIG), cfg._cfg)      # as the run config will be
+    voxel_spacing = merged['tomography']['reconstruction']['voxel_spacing']
+    maskfile = run_dir / mask_name(analysis, opts.layers, voxel_spacing)
     run_yml = run_dir / 'tomo_config.yml'
 
     if 'setup' in stages:

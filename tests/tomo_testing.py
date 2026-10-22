@@ -17,6 +17,7 @@ MU = 0.01                   # attenuation of the disk per pixel
 BRIGHT, DARK = 1000.0, 10.0
 PERIOD = 0.25               # trigger period (s)
 VOXEL_MM = 0.0045           # 5 detector pixels
+STEP = '4.5um'              # VOXEL_MM as it appears in the mask file names
 GRID_MM = 0.054             # 12 voxels, inside the circle the detector can reconstruct
 V_BNDS = [-0.009, 0.009]    # 4 layers
 

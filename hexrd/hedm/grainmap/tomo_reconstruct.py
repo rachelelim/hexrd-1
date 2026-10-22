@@ -2,8 +2,9 @@
 
 Reads an nf_config yml and the detector file, builds the flat-field-corrected filtered radiograph
 stack, runs filtered back-projection per layer in a worker pool, then thresholds, cleans and rebins
-each layer to the voxel grid. ``reconstruct`` writes ``<output_directory>/<analysis_name>_tomo_mask.npz``
-(``_layer<N>`` or ``_<n>layers`` is added when layers are selected) with the keys ``mask`` (bool,
+each layer to the voxel grid. ``reconstruct`` writes ``<output_directory>/<analysis_name>_<step>um_tomo_mask.npz``
+(``<step>`` is the voxel size in micrometres, such as ``10um``; ``_layer<N>`` or ``_<n>layers`` is added after the name
+when layers are selected) with the keys ``mask`` (bool,
 layers by Ny by Nx), ``Xs``, ``Ys``, ``Zs``, ``voxel_spacing``, ``layer_indices``, ``v_mm`` and ``ramsz`` (the vertical sample
 stage position of the scan in mm, nan if unknown, with ``ramsz_source``).
 
@@ -28,7 +29,7 @@ import yaml
 from hexrd import instrument
 from hexrd.hedm.grainmap import nfutil
 from hexrd.hedm.grainmap import tomoutil
-from hexrd.hedm.grainmap.tomo_options import ReconstructOptions  # noqa: F401  (re-exported)
+from hexrd.hedm.grainmap.tomo_options import ReconstructOptions, mask_file_name  # noqa: F401  (ReconstructOptions re-exported)
 from hexrd.hedm.grainmap.tomo_spec import ramsz_of_scan
 
 logger = logging.getLogger(__name__)
@@ -539,7 +540,7 @@ def reconstruct(cfg, options=None, progress=None):
         Xs, Ys, Zs = (np.concatenate([g[k] for g in grids], axis=0)
                       for k in (2, 3, 4))
 
-    output_file = os.path.join(output_dir, f'{output_stem}_tomo_mask.npz')
+    output_file = os.path.join(output_dir, mask_file_name(output_stem, voxel_spacing))
     ramsz, ramsz_source = tomo_ramsz(cfg, opts)
     if ramsz_source == 'unknown':
         logger.warning(

@@ -75,7 +75,7 @@ prints the number and the mask layers the NF run would use. The README in `scrip
 
 ## Output
 
-`<name>_tomo_mask.npz` holds `mask` (bool, layers by Ny by Nx), `Xs`, `Ys`, `Zs` (voxel centers, mm),
+`<name>_<step>um_tomo_mask.npz` (the step is the voxel size in micrometres, such as `10um`; the NF reconstruction uses the mask's spacing for its layers) holds `mask` (bool, layers by Ny by Nx), `Xs`, `Ys`, `Zs` (voxel centers, mm),
 `voxel_spacing`, `layer_indices`, `v_mm` and `ramsz` (the tomography scan's stage position). The interpolated and smoothed files add the keys listed in the
 README (`interpolated_layers`, `interpolation_support`, `mask_unsmoothed`, `sdf_smooth`, ...).
 

@@ -111,9 +111,9 @@ the scan in the yml, so one yml can serve several scans.
 |---|---|---|
 | `setup` | Finds dark/bright/tomo files from `spec.log`, checks dark < bright, writes the config. | `tomo_config.yml` |
 | `missing` | Finds dropped frames as `hexrd tomo missing-frames` does. Falls back to `det_exp_out` from `spec.log` if that fails. | `<retiga>_missing_slots.txt` (+ `_frame_angles.csv`, `_theta_deg.npy`), `find_missing.log` |
-| `recon` | Runs the reconstruction (details below). | `<name>_tomo_mask.npz`, `recon.log` |
+| `recon` | Runs the reconstruction (details below). | `<name>_<step>um_tomo_mask.npz`, `recon.log` |
 | `qc` | Per-layer fill, layer-to-layer change, bright-field clipping; flags suspect layers. | `<name>_quality.png`, `<name>_suspect_layers.json` |
-| `interp` | Interpolates the ranges given by `--interp` (2 supporting layers each side). | `<name>_tomo_mask_interp.npz` |
+| `interp` | Interpolates the ranges given by `--interp` (2 supporting layers each side). | `<name>_<step>um_tomo_mask_interp.npz` |
 | `smooth` | Smooths the interpolated (or original) mask; `--smooth-sigma 0` skips it. | `..._smooth.npz` |
 
 `<name>` is `analysis_name` of the yml (default `tomo_scan<N>`).
@@ -193,7 +193,7 @@ layers whose shifted height is inside `desired_vertical_span`. This is what the 
    ```yaml
    NF_reconstruction:
      tomography:
-       mask_filepath: diamond-1a_scan23_tomo_mask.npz
+       mask_filepath: diamond-1a_scan23_10um_tomo_mask.npz
        spec_log: /path/to/spec.log
        nf_scan: 100            # any of the four scans of the layer (they share a position)
        # vertical_motor_position: -0.175   # used only if the spec log cannot be used
@@ -206,7 +206,7 @@ layers whose shifted height is inside `desired_vertical_span`. This is what the 
 `hexrd tomo offset` prints the number and checks the layers without running anything:
 
 ```bash
-hexrd tomo offset spec.log 23 100 --mask diamond-1a_scan23_tomo_mask.npz --span -0.025 0.025
+hexrd tomo offset spec.log 23 100 --mask diamond-1a_scan23_10um_tomo_mask.npz --span -0.025 0.025
 ```
 
 ```
@@ -223,7 +223,11 @@ layers at `ramsz` 0 to +0.7 (scans 85 to 140), and the layers at negative `ramsz
 
 ## Output file format
 
-`<name>_tomo_mask.npz`:
+`<name>_<step>um_tomo_mask.npz`, where `<step>` is the voxel size in micrometres (`voxel_spacing` 0.01 mm gives `10um`, 0.0045 mm gives
+`4.5um`), so the layer spacing is in the name. The NF reconstruction takes its voxel size and its x and z grid from the mask, not from
+its own `voxel_spacing`, so this is the spacing of the NF layers too. With layers selected the name is `<name>_layer<N>_<step>um_tomo_mask.npz`
+or `<name>_<n>layers_<step>um_tomo_mask.npz`. Files made before this were named `<name>_tomo_mask.npz`.
+
 
 | Key | Content |
 |---|---|

@@ -10,6 +10,19 @@ from typing import Optional
 STAGES = ['setup', 'missing', 'recon', 'qc', 'interp', 'smooth']
 
 
+def voxel_label(voxel_spacing):
+    """The voxel size in micrometres for a file name: 0.01 mm -> '10um', 0.0045 mm -> '4.5um'."""
+    return f'{voxel_spacing * 1000:g}um'
+
+
+def mask_file_name(stem, voxel_spacing):
+    """``<stem>_<step>um_tomo_mask.npz``, the mask file ``tomo_reconstruct.reconstruct`` writes.
+
+    ``stem`` is the analysis name, with ``_layer<N>`` or ``_<n>layers`` if layers were selected.
+    """
+    return f'{stem}_{voxel_label(voxel_spacing)}_tomo_mask.npz'
+
+
 @dataclass
 class ReconstructOptions:
     """Run-time controls of ``reconstruct``. ``None`` means "use the yml, or the default"."""

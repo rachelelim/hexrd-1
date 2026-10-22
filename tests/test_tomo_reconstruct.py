@@ -64,8 +64,8 @@ class TestReconstruct(unittest.TestCase):
         self.assertTrue(all(np.array_equal(mask[0], layer) for layer in mask))
 
     def test_output_name_and_no_temporary_files_left(self):
-        self.assertEqual(self.path.name, 'synthetic_tomo_mask.npz')
-        self.assertEqual(sorted(p.name for p in self.scan.out.iterdir()), ['synthetic_tomo_mask.npz'])
+        self.assertEqual(self.path.name, 'synthetic_4.5um_tomo_mask.npz')
+        self.assertEqual(sorted(p.name for p in self.scan.out.iterdir()), ['synthetic_4.5um_tomo_mask.npz'])
 
     def test_grid_coordinates_are_saved(self):
         for key in ('Xs', 'Ys', 'Zs'):
@@ -73,7 +73,7 @@ class TestReconstruct(unittest.TestCase):
 
     def test_default_is_the_middle_layer(self):
         path = reconstruct(self.scan.cfg(), ReconstructOptions(processes=2, output_dir=str(self.scan.dir / 'one')))
-        self.assertEqual(Path(path).name, 'synthetic_layer2_tomo_mask.npz')
+        self.assertEqual(Path(path).name, 'synthetic_layer2_4.5um_tomo_mask.npz')
         d = np.load(path)
         self.assertEqual(d['mask'].shape[0], 1)
         self.assertEqual(d['layer_indices'].tolist(), [2])
@@ -81,7 +81,7 @@ class TestReconstruct(unittest.TestCase):
     def test_chosen_layers(self):
         path = reconstruct(self.scan.cfg(), ReconstructOptions(layer_indices=[0, 3], processes=2,
                                                                output_dir=str(self.scan.dir / 'two')))
-        self.assertEqual(Path(path).name, 'synthetic_2layers_tomo_mask.npz')
+        self.assertEqual(Path(path).name, 'synthetic_2layers_4.5um_tomo_mask.npz')
         self.assertEqual(np.load(path)['layer_indices'].tolist(), [0, 3])
 
     def test_layer_out_of_range(self):

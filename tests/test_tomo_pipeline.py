@@ -61,19 +61,19 @@ class TestPipeline(unittest.TestCase):
 
     def test_files_of_each_stage(self):
         names = sorted(p.name for p in self.sr.run_dir.iterdir())
-        for expected in ('tomo_config.yml', 'retiga_000003_missing_slots.txt', 'synthetic_tomo_mask.npz',
-                         'synthetic_tomo_mask_smooth.npz', 'recon.log', 'find_missing.log'):
+        for expected in ('tomo_config.yml', 'retiga_000003_missing_slots.txt', 'synthetic_4.5um_tomo_mask.npz',
+                         'synthetic_4.5um_tomo_mask_smooth.npz', 'recon.log', 'find_missing.log'):
             self.assertIn(expected, names)
         self.assertFalse([n for n in names if n.endswith('.dat')])
 
     def test_final_mask_is_the_smoothed_one(self):
-        self.assertEqual(self.final.name, 'synthetic_tomo_mask_smooth.npz')
+        self.assertEqual(self.final.name, 'synthetic_4.5um_tomo_mask_smooth.npz')
         d = np.load(self.final)
         self.assertIn('mask_unsmoothed', d.files)
         self.assertEqual(d['mask'].shape[0], 4)
 
     def test_mask_is_the_disk_even_with_dropped_frames(self):
-        mask = np.load(self.sr.run_dir / 'synthetic_tomo_mask.npz')['mask']
+        mask = np.load(self.sr.run_dir / 'synthetic_4.5um_tomo_mask.npz')['mask']
         ideal = T.ideal_mask(mask.shape[1:])
         for layer in mask:
             self.assertGreater(iou(layer, ideal), 0.7)
@@ -113,7 +113,7 @@ class TestPipeline(unittest.TestCase):
         self.assertEqual(cfg.multiprocessing.num_cpus, 2)
 
     def test_existing_stages_are_skipped_and_forced_ones_are_redone(self):
-        mask = self.sr.run_dir / 'synthetic_tomo_mask.npz'
+        mask = self.sr.run_dir / 'synthetic_4.5um_tomo_mask.npz'
         before = mask.stat().st_mtime_ns
         with self.assertLogs('hexrd', level='INFO') as logs:
             run_pipeline(self.sr.cfg(), PipelineOptions(stages=STAGES, smooth_sigma=1.0, powder_open_um=0))
@@ -134,7 +134,7 @@ class TestOptions(unittest.TestCase):
             with self.assertLogs('hexrd', level='INFO') as logs:
                 final = run_pipeline(run.cfg(), PipelineOptions(stages=['setup', 'missing', 'recon', 'qc', 'interp'],
                                                                 layers=[1], interp='1-1'))
-            self.assertEqual(Path(final).name, 'synthetic_layer1_tomo_mask.npz')
+            self.assertEqual(Path(final).name, 'synthetic_layer1_4.5um_tomo_mask.npz')
             self.assertEqual(np.load(final)['mask'].shape[0], 1)
             self.assertIn('layers given: qc/interp need all layers, skipping them', '\n'.join(logs.output))
         finally:
@@ -145,7 +145,7 @@ class TestOptions(unittest.TestCase):
         try:
             final = Path(run_pipeline(run.cfg(), PipelineOptions(stages=['setup', 'missing', 'recon', 'interp'],
                                                                  interp='4-5')))
-            self.assertEqual(final.name, 'synthetic_tomo_mask_interp.npz')
+            self.assertEqual(final.name, 'synthetic_4.5um_tomo_mask_interp.npz')
             d = np.load(final)
             self.assertEqual(d['mask'].shape[0], 10)
             self.assertEqual(d['interpolated_layers'].tolist(), [4, 5])

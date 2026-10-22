@@ -120,6 +120,31 @@ class TestMasks(unittest.TestCase):
         self.assertFalse(new[4].any())
 
 
+class TestMaskFileName(unittest.TestCase):
+
+    def test_voxel_size_in_micrometres(self):
+        from hexrd.hedm.grainmap.tomo_options import voxel_label
+        cases = {0.01: '10um', 0.005: '5um', 0.0045: '4.5um', 0.0033: '3.3um', 0.00125: '1.25um', 0.1: '100um', 0.02: '20um'}
+        for spacing, label in cases.items():
+            self.assertEqual(voxel_label(spacing), label, spacing)
+
+    def test_mask_file_name(self):
+        from hexrd.hedm.grainmap.tomo_options import mask_file_name
+        self.assertEqual(mask_file_name('diamond_scan23', 0.01), 'diamond_scan23_10um_tomo_mask.npz')
+        self.assertEqual(mask_file_name('diamond_scan23_layer20', 0.005), 'diamond_scan23_layer20_5um_tomo_mask.npz')
+
+    def test_pipeline_predicts_the_name_reconstruct_writes(self):
+        from hexrd.hedm.grainmap.tomo_pipeline import mask_name
+        self.assertEqual(mask_name('a', None, 0.01), 'a_10um_tomo_mask.npz')
+        self.assertEqual(mask_name('a', [20], 0.01), 'a_layer20_10um_tomo_mask.npz')
+        self.assertEqual(mask_name('a', [3, 9], 0.005), 'a_2layers_5um_tomo_mask.npz')
+
+    def test_interpolated_and_smoothed_names_keep_the_step(self):
+        # the pipeline appends to the mask file's stem
+        name = Path('a_10um_tomo_mask.npz')
+        self.assertEqual(name.with_name(name.stem + '_interp.npz').name, 'a_10um_tomo_mask_interp.npz')
+
+
 class TestFrames(unittest.TestCase):
 
     @classmethod
