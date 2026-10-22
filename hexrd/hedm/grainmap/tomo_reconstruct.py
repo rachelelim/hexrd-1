@@ -4,7 +4,8 @@ Reads an nf_config yml and the detector file, builds the flat-field-corrected fi
 stack, runs filtered back-projection per layer in a worker pool, then thresholds, cleans and rebins
 each layer to the voxel grid. ``reconstruct`` writes ``<output_directory>/<analysis_name>_tomo_mask.npz``
 (``_layer<N>`` or ``_<n>layers`` is added when layers are selected) with the keys ``mask`` (bool,
-layers by Ny by Nx), ``Xs``, ``Ys``, ``Zs``, ``voxel_spacing``, ``layer_indices`` and ``v_mm``.
+layers by Ny by Nx), ``Xs``, ``Ys``, ``Zs``, ``voxel_spacing``, ``layer_indices``, ``v_mm`` and ``ramsz`` (the vertical sample
+stage position of the scan in mm, nan if unknown, with ``ramsz_source``).
 
 Values that describe the scan (spec log and scan, missing-slots file, angle file, degrees per frame)
 come from the ``tomography`` section of the yml and are overridden by the same-named
@@ -28,6 +29,7 @@ from hexrd import instrument
 from hexrd.hedm.grainmap import nfutil
 from hexrd.hedm.grainmap import tomoutil
 from hexrd.hedm.grainmap.tomo_options import ReconstructOptions  # noqa: F401  (re-exported)
+from hexrd.hedm.grainmap.tomo_spec import ramsz_of_scan
 
 logger = logging.getLogger(__name__)
 _WORKER_CONFIG = None
@@ -47,6 +49,23 @@ def resolve_options(cfg, options=None):
     if opts.processes is None:
         opts.processes = cfg.multiprocessing.num_cpus
     return opts
+
+
+def tomo_ramsz(cfg, opts):
+    """(vertical sample stage position of the tomography scan in mm, where it came from).
+
+    From the spec log if it records the position for the scan; else ``tomography: reconstruction:
+    vertical_motor_position`` of the yml; else (nan, 'unknown'). It is saved in the mask so that the NF
+    reconstruction can match its layers to the mask (see ``nfutil.resolve_vertical_motor_position``).
+    """
+    if opts.spec_log is not None:
+        ramsz = ramsz_of_scan(opts.spec_log, opts.spec_scan)
+        if ramsz is not None:
+            return ramsz, 'spec log'
+    configured = cfg.tomography.reconstruction.vertical_motor_position
+    if configured is not None:
+        return float(configured), 'config'
+    return float('nan'), 'unknown'
 
 
 def create_memmap_array(arr, path):
@@ -521,6 +540,14 @@ def reconstruct(cfg, options=None, progress=None):
                       for k in (2, 3, 4))
 
     output_file = os.path.join(output_dir, f'{output_stem}_tomo_mask.npz')
+    ramsz, ramsz_source = tomo_ramsz(cfg, opts)
+    if ramsz_source == 'unknown':
+        logger.warning(
+            'The vertical stage position (ramsz) of the tomography scan is not in the spec log and not in the '
+            'config (tomography: reconstruction: vertical_motor_position); the mask will not record it, so the '
+            'NF reconstruction cannot match its layers to the mask from the spec log')
+    else:
+        logger.info(f'Vertical stage position of the tomography scan: ramsz {ramsz:g} mm ({ramsz_source})')
 
     np.savez_compressed(
         output_file,
@@ -530,7 +557,9 @@ def reconstruct(cfg, options=None, progress=None):
         Zs=Zs,
         voxel_spacing=voxel_spacing,
         layer_indices=np.array(layer_ids),
-        v_mm=np.asarray(vert_points)
+        v_mm=np.asarray(vert_points),
+        ramsz=ramsz,
+        ramsz_source=ramsz_source
     )
 
     logger.info(f'Saved tomography mask to: {output_file}')

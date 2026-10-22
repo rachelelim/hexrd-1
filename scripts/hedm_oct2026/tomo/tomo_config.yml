@@ -60,6 +60,9 @@ tomography:
     x_length: 1.5
     z_length: 1.5
     #cross_sectional_dim: 2
+    # Vertical sample stage position (ramsz, mm) of the tomography scan. It is read from the spec log; this is used only
+    # if the log does not give it. The mask records it, so the NF reconstruction can match its layers to the mask.
+    # vertical_motor_position: 0.35
 
   # Don't change these unless you know what you are doing: they close small holes and remove noise
   processing:

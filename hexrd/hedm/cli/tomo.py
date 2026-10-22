@@ -5,6 +5,7 @@ Steps:
   pipeline        run every stage (setup, missing, recon, qc, interp, smooth) for one spec scan
   missing-frames  find dropped frames in an h5 stack and write the projection angles
   spec            list the scans in a spec log, or the tomography scans
+  offset          vertical offset between a tomography scan and an NF scan, from the spec log
   interpolate     fill bad layers of a mask by interpolation
   smooth          smooth a mask
 
@@ -17,7 +18,7 @@ import logging
 import os
 import sys
 
-_description = 'Tomography masks: reconstruct, pipeline, missing-frames, spec, interpolate, smooth'
+_description = 'Tomography masks: reconstruct, pipeline, missing-frames, spec, offset, interpolate, smooth'
 _help = 'tomography mask tools (use `hexrd tomo -h` for the steps)'
 
 
@@ -28,6 +29,7 @@ def configure_parser(sub_parsers):
     _configure_pipeline(steps)
     _configure_missing_frames(steps)
     _configure_spec(steps)
+    _configure_offset(steps)
     _configure_interpolate(steps)
     _configure_smooth(steps)
 
@@ -287,6 +289,35 @@ def execute_spec(args, parser):
         if args.scan not in scans:
             parser.error(f'scan {args.scan} not in {args.logfile}')
         print('\n'.join(tomo_spec.scan_details(scans[args.scan])))
+
+
+# offset --------------------------------------------------------------------------------------
+
+def _configure_offset(steps):
+    p = steps.add_parser(
+        'offset', description='Print the vertical offset between a tomography mask and an NF layer, from the vertical '
+        'sample stage positions (ramsz) in the spec log: vertical_motor_position = ramsz_nf - ramsz_tomo',
+        help='vertical offset between a tomography scan and an NF scan, from the spec log')
+    p.set_defaults(func=execute_offset)
+    p.add_argument('logfile', help='spec.log')
+    p.add_argument('tomo_scan', type=int, help='spec scan number of the tomography scan the mask was made from')
+    p.add_argument('nf_scan', type=int, help='spec scan number of any NF scan of the layer (the four quarter scans share a position)')
+    p.add_argument('--mask', default=None, help='*_tomo_mask.npz: also list the layers the NF run would use (needs --span)')
+    p.add_argument('--span', type=float, nargs=2, metavar=('LOW', 'HIGH'), default=None,
+                   help='the NF vertical span, desired_vertical_span of the NF config (mm)')
+
+
+def execute_offset(args, parser):
+    from hexrd.hedm.grainmap.tomo_spec import vertical_offset_report
+
+    if (args.mask is None) != (args.span is None):
+        parser.error('--mask and --span go together')
+    try:
+        lines = vertical_offset_report(args.logfile, args.tomo_scan, args.nf_scan, args.mask, args.span)
+    except (ValueError, FileNotFoundError) as exc:
+        print(f'ERROR: {exc}', file=sys.stderr)
+        sys.exit(1)
+    print('\n'.join(lines))
 
 
 # interpolate and smooth ----------------------------------------------------------------------

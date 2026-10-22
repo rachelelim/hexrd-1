@@ -93,10 +93,13 @@ def write_instrument(path, tvec=(0.0, 0.0, -2.0)):
     return path
 
 
-def write_spec_log(path, n_slots=90, dropped=(), numbers=(1, 2, 3), tomo_h5_dir='/data'):
-    """A spec log with a dark, a bright and a tomography scan; ``dropped`` slots have a low det_exp_out."""
+def write_spec_log(path, n_slots=90, dropped=(), numbers=(1, 2, 3), tomo_h5_dir='/data', ramsz=None):
+    """A spec log with a dark, a bright and a tomography scan; ``dropped`` slots have a low det_exp_out.
+    ``ramsz``, if given, is the vertical stage position logged before the scans."""
     _, step = angles(n_slots)
     lines = ['#F spec.log', '']
+    if ramsz is not None:      # logged by a macro just before the scans at a stage position
+        lines.append(f'#C Wed Sep 30 21:36:05 2026.  line 2 ramxx 6.10352e-06 ramsz {ramsz}.')
     for role, number in zip(('dark', 'bright', 'tomo'), numbers):
         n = n_slots if role == 'tomo' else 5
         if role == 'tomo':

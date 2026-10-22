@@ -4,6 +4,7 @@ contributing authors: dcp5303, ken38, seg246, Austin Gerlt, Simon Mason, lim37
 """
 
 import copy
+import logging
 import math
 import matplotlib.pyplot as plt
 import numpy as np
@@ -17,8 +18,58 @@ from hexrd import rotations
 from hexrd.sampleOrientations import sampleRFZ
 from hexrd.transforms import xfcapi
 
+from ..tomo_spec import ramsz_of_scan
 from .data_io import load_omegas_from_npz_and_correct, save_nf_data_for_paraview
 from .processor_functions import precompute_diffraction_data, test_orientations_at_coordinates
+
+logger = logging.getLogger(__name__)
+
+
+def resolve_vertical_motor_position(mask_file, spec_log=None, nf_scan=None, configured=None):
+    """The vertical offset (mm) to add to the heights ``Ys`` of a tomography mask to get NF heights.
+
+    Both the mask and the NF layer are measured from the beam center, so the offset is the difference of the
+    vertical sample stage positions (ramsz, positive moves the sample up):
+    ``ramsz of the NF scan - ramsz of the tomography scan``. A sample that is higher by ``z`` has its features
+    ``z`` higher in the lab, which is how the NF layer sees them.
+
+    In order of preference:
+
+    1. the spec log: ``spec_log`` and ``nf_scan`` give the NF layer's ramsz, and the mask records the ramsz of
+       its tomography scan (``hexrd tomo reconstruct`` saves it as ``ramsz``);
+    2. ``configured``, the value given in the config (``NF_reconstruction: tomography:
+       vertical_motor_position``), used as it is;
+    3. 0, with a warning.
+
+    Returns ``(offset, source)``, source being 'spec log', 'config' or 'none'.
+    """
+    offset_config = None if configured is None else float(configured)
+    if spec_log is not None and nf_scan is not None:
+        mask_ramsz = None
+        with np.load(mask_file) as mask:
+            if 'ramsz' in mask.files and np.isfinite(float(mask['ramsz'])):
+                mask_ramsz = float(mask['ramsz'])
+        nf_ramsz = ramsz_of_scan(spec_log, int(nf_scan))
+        if mask_ramsz is None:
+            logger.warning(f'{mask_file} does not record the vertical position of its tomography scan (ramsz); '
+                           'cannot use the spec log')
+        elif nf_ramsz is None:
+            logger.warning(f'{spec_log} has no vertical position (ramsz) for scan {nf_scan}')
+        else:
+            offset = nf_ramsz - mask_ramsz
+            logger.info(f'Vertical offset of the mask {offset:+g} mm from the spec log: NF scan {nf_scan} ramsz '
+                        f'{nf_ramsz:g}, tomography scan ramsz {mask_ramsz:g}')
+            if offset_config is not None and abs(offset_config - offset) > 1e-6:
+                logger.warning(f'vertical_motor_position in the config ({offset_config:g}) differs from the spec '
+                               f'log ({offset:g}); using the spec log')
+            return offset, 'spec log'
+    if offset_config is not None:
+        logger.info(f'Vertical offset of the mask {offset_config:+g} mm from the config')
+        return offset_config, 'config'
+    logger.warning('No vertical offset for the tomography mask: set spec_log and nf_scan, or vertical_motor_position, '
+                   'under NF_reconstruction: tomography. Using 0')
+    return 0.0, 'none'
+
 
 def gen_nf_test_grid(v_bnds, voxel_spacing, x_center=0., z_center=0., x_length=1.25, z_length=1.25):
     Zs_list = np.arange(z_center-z_length/2.,

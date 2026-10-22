@@ -175,8 +175,9 @@ class TomoReconstructionConfig(Config):
 
     @property
     def vertical_motor_position(self):
+        """Vertical sample stage position (ramsz, mm) of the tomography scan, used when the spec log has none"""
         return self._cfg.get(
-            'tomography:reconstruction:vertical_motor_position', 0.0)
+            'tomography:reconstruction:vertical_motor_position', None)
 
     @property
     def voxel_spacing(self):

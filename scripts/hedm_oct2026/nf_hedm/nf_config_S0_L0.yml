@@ -92,6 +92,12 @@ NF_reconstruction:
   tomography:
     mask_filepath: /usr/workspace/lim37/ER-disloc/voisin-4783-b/brass-ht-s1-1/tomo/brass_all_5um_tomo_mask_small.npz
     use_single_layer: False
+    # Vertical offset between the mask and this NF layer: the spec log is used first. Give the spec log and any NF scan of
+    # the layer, and the offset is (ramsz of that NF scan) - (ramsz of the tomography scan, saved in the mask).
+    # spec_log: /path/to/spec.log
+    # nf_scan: 100
+    # If the spec log cannot be used (no spec_log or nf_scan, or the mask has no ramsz), this value is added to the mask
+    # heights as it is (mm). `hexrd tomo offset` prints the number.
     vertical_motor_position: -0.875 #-0.3
 
   cross_sectional_dimensions: 1.45 # mm

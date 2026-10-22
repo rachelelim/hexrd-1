@@ -14,7 +14,7 @@ from hexrd import rotations
 from hexrd import valunits
 
 from .data_io import load_images_from_npz, load_omegas_from_npz_and_correct
-from .utilities import generate_test_coordinates
+from .utilities import generate_test_coordinates, resolve_vertical_motor_position
 
 def load_instrument(yml):
     with open(yml, 'r') as f:
@@ -240,6 +240,8 @@ class Experiment:
         if cfg.reconstruction.tomography is None:
             self.mask_filepath = None
             self.vertical_motor_position = None
+            self.spec_log = None
+            self.nf_scan = None
         else:
             # TODO: Add project through single layer
             self.mask_filepath = cfg.reconstruction.tomography['mask_filepath']
@@ -259,6 +261,8 @@ class Experiment:
             self.vertical_motor_position = cfg.reconstruction.tomography[
                 'vertical_motor_position']
             self.use_single_layer = cfg.reconstruction.tomography['use_single_layer']
+            self.spec_log = cfg.reconstruction.tomography['spec_log']
+            self.nf_scan = cfg.reconstruction.tomography['nf_scan']
 
         if cfg.reconstruction.missing_grains:
             self.reconstructed_data_path = cfg.reconstruction.missing_grains[
@@ -279,12 +283,20 @@ class Experiment:
         return state
 
     def generate_test_coordinates(self):
-        """Return ``Xs, Ys, Zs, mask, test_coordinates`` for this experiment."""
+        """Return ``Xs, Ys, Zs, mask, test_coordinates`` for this experiment.
+
+        With a tomography mask, its heights are shifted by the vertical offset between the mask and this NF
+        layer: from the spec log (``spec_log`` and ``nf_scan``) if given, else ``vertical_motor_position``.
+        """
+        vertical_motor_position = self.vertical_motor_position
+        if self.mask_filepath is not None:
+            vertical_motor_position, self.vertical_offset_source = resolve_vertical_motor_position(
+                self.mask_filepath, self.spec_log, self.nf_scan, self.vertical_motor_position)
         return generate_test_coordinates(
             self.vertical_bounds, self.voxel_spacing, self.x_center,
             self.z_center, self.x_length, self.z_length,
             mask_data_file=self.mask_filepath,
-            vertical_motor_position=self.vertical_motor_position)
+            vertical_motor_position=vertical_motor_position)
 
 
 def generate_experiment(cfg):

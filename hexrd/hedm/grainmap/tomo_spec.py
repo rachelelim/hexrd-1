@@ -26,6 +26,12 @@ _S_RE = re.compile(r"^#S\s+(\d+)\s*(.*)$")
 _RETIGA_RE = re.compile(r"^Retiga #\d+ saved last image to (\S+?)\.?$")
 # spec writes this #C comment just before the #S line of each tomography scan
 _TOMO_MARK = "doing the tomography scan"
+# The sample's vertical stage position (mm) is not in the scan header or columns. A macro logs it in a #C comment
+# just before the scans taken at that position ("line 2 ramxx 6.1e-06 ramsz 0.35."), and "ramsz reset from -0.05 to 0."
+# when the stage is redefined. It holds for the scans that follow, until the next such comment.
+_NUM = r"-?[0-9.]+(?:[eE][-+]?\d+)?"
+_RAMSZ_RE = re.compile(rf"\bramsz\s+({_NUM})\.?\s*$")
+_RAMSZ_RESET_RE = re.compile(rf"\bramsz reset from {_NUM} to ({_NUM})\.?\s*$")
 
 
 @dataclass
@@ -37,6 +43,7 @@ class Scan:
     comments: list = field(default_factory=list)  # #C lines within the scan
     is_tomo: bool = False       # preceded by the "doing the tomography scan" note
     retiga_file: str = ""       # path of the retiga .h5 saved during the scan
+    ramsz: object = None        # vertical sample stage position (mm) at the scan, from the #C comments, or None
     data: dict = field(default_factory=dict)       # column name -> 1D array
 
     @property
@@ -46,6 +53,34 @@ class Scan:
     def as_array(self):
         """Data as an (npoints, ncolumns) array in column order."""
         return np.column_stack([self.data[c] for c in self.columns])
+
+
+def _ramsz_in(line):
+    """The ramsz value a #C comment sets, or None."""
+    for regex in (_RAMSZ_RESET_RE, _RAMSZ_RE):
+        m = regex.search(line)
+        if m:
+            return float(m.group(1).rstrip("."))
+    return None
+
+
+def ramsz_of_scan(path, scan):
+    """Vertical sample stage position (mm) in effect at scan number ``scan``, or None if the log does not say.
+
+    Reads the log only as far as the scan. See the note above ``_RAMSZ_RE``.
+    """
+    current = None
+    with open(path, "r", errors="replace") as f:
+        for line in f:
+            if line.startswith("#C"):
+                value = _ramsz_in(line)
+                if value is not None:
+                    current = value
+            else:
+                m = _S_RE.match(line)
+                if m and int(m.group(1)) == scan:
+                    return current
+    raise ValueError(f"scan {scan} not found in {path}")
 
 
 def dropped_slots(scan, frac=0.5):
@@ -81,16 +116,21 @@ def parse_spec(path):
     scan = None
     rows = []
     tomo_pending = False
+    ramsz = None
     with open(path, "r", errors="replace") as f:
         for line in f:
             line = line.rstrip("\n")
             if not line.strip():
                 continue
             if line.startswith("#"):
+                if line.startswith("#C"):
+                    value = _ramsz_in(line)
+                    if value is not None:
+                        ramsz = value
                 m = _S_RE.match(line)
                 if m:
                     _finalize(scan, rows)
-                    scan = Scan(int(m.group(1)), m.group(2).strip(), is_tomo=tomo_pending)
+                    scan = Scan(int(m.group(1)), m.group(2).strip(), is_tomo=tomo_pending, ramsz=ramsz)
                     tomo_pending = False
                     scans[scan.number] = scan
                     rows = []
@@ -170,4 +210,51 @@ def scan_details(scan):
              f"{scan.npoints} points, {len(scan.columns)} columns:",
              "  " + ", ".join(scan.columns)]
     lines += ["  #C " + c for c in scan.comments]
+    return lines
+
+
+def vertical_offset(spec_log, tomo_scan, nf_scan):
+    """(ramsz of the tomography scan, ramsz of the NF scan, offset) in mm, from the spec log.
+
+    The offset is ``ramsz_nf - ramsz_tomo``: add it to the heights of the tomography mask to get heights in the
+    NF layer (the NF config ``vertical_motor_position``). Positive ramsz moves the sample up, so a sample that is
+    higher by ``z`` has its features ``z`` higher in the lab. Raises ValueError if the log has no ramsz for a scan.
+    """
+    z_tomo = ramsz_of_scan(spec_log, tomo_scan)
+    z_nf = ramsz_of_scan(spec_log, nf_scan)
+    missing = sorted({n for n, z in ((tomo_scan, z_tomo), (nf_scan, z_nf)) if z is None})
+    if missing:
+        raise ValueError(f"{spec_log} has no vertical position (ramsz) for scan(s) {missing}")
+    return z_tomo, z_nf, z_nf - z_tomo
+
+
+def vertical_offset_report(spec_log, tomo_scan, nf_scan, mask=None, span=None):
+    """Lines of text giving the vertical offset, and with ``mask`` and ``span`` the mask layers the NF run would use.
+
+    ``span`` is the NF vertical span (``desired_vertical_span``, mm, measured from the NF beam center). A mask
+    layer is used if its height plus the offset is at least ``span[0]`` and below ``span[1]``, as in
+    ``nfutil.generate_test_coordinates``.
+    """
+    z_tomo, z_nf, offset = vertical_offset(spec_log, tomo_scan, nf_scan)
+    lines = [f"tomography scan {tomo_scan}: ramsz {z_tomo:g} mm",
+             f"NF scan {nf_scan}: ramsz {z_nf:g} mm",
+             f"vertical_motor_position = ramsz_nf - ramsz_tomo = {offset:+g} mm",
+             "  (added to the mask heights Ys to get NF heights; positive ramsz moves the sample up)"]
+    if mask is not None and span is not None:
+        d = np.load(mask)
+        ys = np.asarray(d["Ys"])[:, 0, 0] if np.asarray(d["Ys"]).ndim == 3 else np.asarray(d["Ys"])
+        nf_heights = ys + offset
+        used = np.flatnonzero((nf_heights >= span[0]) & (nf_heights < span[1]))
+        lines.append(f"mask layers: {len(ys)}, heights {ys.min():+.4f} to {ys.max():+.4f} mm in the mask, "
+                     f"{nf_heights.min():+.4f} to {nf_heights.max():+.4f} mm for this NF scan")
+        if len(used):
+            ids = np.asarray(d["layer_indices"])[used] if "layer_indices" in d.files else used
+            lines.append(f"NF vertical span [{span[0]:g}, {span[1]:g}) uses {len(used)} mask layer(s): "
+                         f"positions {used.tolist()}, layer ids {np.asarray(ids).tolist()}, "
+                         f"NF heights {np.round(nf_heights[used], 4).tolist()}")
+        else:
+            lines.append(f"NF vertical span [{span[0]:g}, {span[1]:g}) matches NO mask layer: this mask does not "
+                         "cover the NF layer. Use the mask of a tomography scan taken closer to it.")
+        if "ramsz" in d.files and np.isfinite(float(d["ramsz"])) and abs(float(d["ramsz"]) - z_tomo) > 1e-6:
+            lines.append(f"WARNING: the mask records ramsz {float(d['ramsz']):g} but scan {tomo_scan} is at {z_tomo:g}")
     return lines

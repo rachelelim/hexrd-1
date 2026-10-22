@@ -13,6 +13,7 @@ that takes a yml config. The full guide, with the assumptions and limits of the 
 | `hexrd tomo reconstruct <yml>` | Reconstruction (filtered back-projection per layer), thresholding, powder removal, rebinning. |
 | `hexrd tomo missing-frames <h5>` | Finds dropped frames from the h5 timestamps; writes the projection angles. |
 | `hexrd tomo spec <spec.log> [scan]` | Lists the scans in a spec log, or the tomography scans (`--tomo`). |
+| `hexrd tomo offset <spec.log> <tomo scan> <NF scan>` | Prints the vertical offset between a tomography mask and an NF layer, from the stage positions in the spec log. |
 | `hexrd tomo interpolate <mask> <out> <ranges>` | Fills bad layers by interpolating signed-distance maps. |
 | `hexrd tomo smooth <mask> <out> <sigma>` | Smooths a mask by filtering its signed-distance field. |
 
@@ -62,10 +63,20 @@ hexrd tomo reconstruct <tomo_dir>/run_scan23/tomo_config.yml --layer-index 20  #
 The pipeline writes everything to `<tomo_dir>/run_scan<N>` (`--run-dir` to change it), including the config it used.
 A stage is skipped if its output exists (`-f` to redo it), and `--dry-run` checks the inputs without running.
 
+## Matching the mask to the NF layers
+
+The mask heights are measured from the tomography scan's beam center, an NF layer's from its own. The NF reconstruction adds
+`vertical_motor_position` to the mask heights, and it is the difference of the vertical sample stage positions (`ramsz`,
+positive moves the sample up): `ramsz` of the NF scan minus `ramsz` of the tomography scan. `ramsz` is read from the spec log
+(a `#C` comment before the scans at each position), and `hexrd tomo reconstruct` saves it in the mask. In the NF config,
+give `NF_reconstruction: tomography: spec_log` and `nf_scan` and the offset is computed; if the spec log cannot be used, the
+configured `vertical_motor_position` is used as it is. `hexrd tomo offset spec.log 23 100 --mask mask.npz --span -0.025 0.025`
+prints the number and the mask layers the NF run would use. The README in `scripts/hedm_oct2026/tomo` has the details.
+
 ## Output
 
 `<name>_tomo_mask.npz` holds `mask` (bool, layers by Ny by Nx), `Xs`, `Ys`, `Zs` (voxel centers, mm),
-`voxel_spacing`, `layer_indices` and `v_mm`. The interpolated and smoothed files add the keys listed in the
+`voxel_spacing`, `layer_indices`, `v_mm` and `ramsz` (the tomography scan's stage position). The interpolated and smoothed files add the keys listed in the
 README (`interpolated_layers`, `interpolation_support`, `mask_unsmoothed`, `sdf_smooth`, ...).
 
 ## In Python

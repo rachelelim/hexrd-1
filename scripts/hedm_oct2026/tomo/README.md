@@ -165,6 +165,62 @@ For each requested layer (a detector row), `hexrd tomo reconstruct`:
   convention, not tested with a non-zero offset). It is 0 for `retiga_e7.yml`.
 - The mask grid is 150 x 150 voxels covering 1.5 mm (X and Z from -0.75 to +0.74 mm).
 
+## Matching the mask to the NF layers (vertical stage position)
+
+The mask heights `Ys` are measured from the beam center of the tomography scan. An NF layer is measured from the beam
+center of its own scan. To use the mask in an NF reconstruction, the heights must be shifted by the difference
+between the two scans' vertical sample stage positions, **ramsz**. The convention is that a positive `ramsz` moves the
+sample up. A sample that is higher by `z` has its features `z` higher in the lab, so
+
+```
+vertical_motor_position = ramsz of the NF scan - ramsz of the tomography scan      (mm)
+NF height = mask height Ys + vertical_motor_position
+```
+
+The NF reconstruction (`Experiment.generate_test_coordinates`) adds `vertical_motor_position` to the mask `Ys` and keeps the
+layers whose shifted height is inside `desired_vertical_span`. This is what the three places below take care of:
+
+1. **The spec log is read first.** The stage position is not a scan column; a macro logs it in a `#C` comment just before
+   the scans taken at that position (`line 2 ramxx ... ramsz 0.35.`, or `ramsz reset from -0.05 to 0.`), and it holds for
+   the scans that follow. In this experiment scan 23 is at `ramsz 0.35`, scan 20 at `-0.35`, and the NF scans 29 to 140 step
+   from `-0.675` to `+0.675` mm in 0.05 mm steps, four scans (the four quarter turns) per position.
+2. **The mask records its own `ramsz`.** `hexrd tomo reconstruct` looks up the tomography scan in the spec log
+   (`tomography: spec: {log, scan}`) and saves `ramsz` and `ramsz_source` ('spec log') in the mask. If the log does not give
+   it, `tomography: reconstruction: vertical_motor_position` of the yml is used instead (source 'config'). If neither is
+   known the mask records `nan` ('unknown') and a warning says so.
+3. **The NF config takes the offset from the spec log.** Give the spec log and any NF scan of the layer:
+
+   ```yaml
+   NF_reconstruction:
+     tomography:
+       mask_filepath: diamond-1a_scan23_tomo_mask.npz
+       spec_log: /path/to/spec.log
+       nf_scan: 100            # any of the four scans of the layer (they share a position)
+       # vertical_motor_position: -0.175   # used only if the spec log cannot be used
+   ```
+
+   The spec log is checked first. If it cannot be used (no `spec_log` or `nf_scan`, the mask has no `ramsz`, or the log has
+   no position for the scan), `vertical_motor_position` from the config is used as it is, as before; if that is missing too
+   the offset is 0 with a warning. If both are present and differ, the spec log wins and a warning says so.
+
+`hexrd tomo offset` prints the number and checks the layers without running anything:
+
+```bash
+hexrd tomo offset spec.log 23 100 --mask diamond-1a_scan23_tomo_mask.npz --span -0.025 0.025
+```
+
+```
+tomography scan 23: ramsz 0.35 mm
+NF scan 100: ramsz 0.175 mm
+vertical_motor_position = ramsz_nf - ramsz_tomo = -0.175 mm
+...
+NF vertical span [-0.025, 0.025) uses 5 mask layer(s): positions [50, 51, 52, 53, 54], ...
+```
+
+`--span` is the NF `desired_vertical_span`. If no mask layer falls inside it, the command says the mask does not cover the NF layer.
+A tomography scan covers the NF layers within about its beam height: scan 23 (`ramsz +0.35`, 0.7 mm tall) covers the NF
+layers at `ramsz` 0 to +0.7 (scans 85 to 140), and the layers at negative `ramsz` need the mask of scan 20 (`ramsz -0.35`).
+
 ## Output file format
 
 `<name>_tomo_mask.npz`:
@@ -175,6 +231,7 @@ For each requested layer (a detector row), `hexrd tomo reconstruct`:
 | `Xs`, `Ys`, `Zs` | voxel-center coordinates in mm, same shape as `mask` (`Ys` = v) |
 | `voxel_spacing` | mm |
 | `layer_indices`, `v_mm` | which layers are in the file and their v |
+| `ramsz`, `ramsz_source` | vertical sample stage position of the tomography scan in mm (`nan` if unknown) and where it came from ('spec log', 'config', 'unknown') |
 
 The `_interp` file adds `interpolated_layers` and `interpolation_support` (JSON: the supporting layers used
 for each range). The `_smooth` file adds `mask_unsmoothed`, `sdf_smooth` and `smooth_sigma_voxels`.
@@ -256,9 +313,9 @@ hexrd tomo smooth in.npz out_smooth.npz 1.5
 ## Assumptions and limitations
 
 - **Vertical position:** the beam is assumed to be at the detector center (`--vert-beam-center 0`), which is
-  what the scans here showed (beam on rows ~700 to 1500, centered on row 1100). The script ignores
-  `vertical_motor_position` from the config. For a scan at a different height, such as the other half of a
-  structure, set `--vert-beam-center` to the Y of the detector center relative to the beam. The sign follows
+  what the scans here showed (beam on rows ~700 to 1500, centered on row 1100). `vertical_motor_position` of the
+  config does not move the layers (it is only recorded in the mask as `ramsz`, see above). For a scan with the beam at a
+  different place on the detector, set `--vert-beam-center` to the Y of the detector center relative to the beam. The sign follows
   the coordinate convention above and was derived from the code; it has not been tested on a scan with a non-zero
   offset, so check where the layers land on a radiograph.
 - **Mask orientation:** the mask's X/Z axes come from the same grid function as the NF reconstruction

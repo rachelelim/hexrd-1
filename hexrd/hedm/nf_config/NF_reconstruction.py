@@ -7,10 +7,14 @@ class NF_ReconstructionConfig(Config):
         prefix = 'NF_reconstruction:tomography:'
         if self._cfg.get(prefix + 'mask_filepath', None) is None:
             return None
-        return {name: self._cfg.get(prefix + name)
+        # vertical_motor_position, or spec_log with nf_scan, give the vertical offset of the mask;
+        # see nfutil.resolve_vertical_motor_position
+        return {name: self._cfg.get(prefix + name, None)
                 for name in ('mask_filepath',
                              'vertical_motor_position',
-                             'use_single_layer')}
+                             'use_single_layer',
+                             'spec_log',
+                             'nf_scan')}
 
     @property
     def cross_sectional_dimensions(self):
