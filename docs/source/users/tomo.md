@@ -31,7 +31,7 @@ tomography:
   spec:                         # the scan; the pipeline finds the dark (scan - 2) and bright (scan - 1) from it
     log: /path/to/spec.log
     scan: 23
-    tomo_dir: /path/to/h5/files
+    sample_dir: /path/to/sample # h5 files are <sample_dir>/<scan>/nf/retiga_*.h5 (or use tomo_dir, a flat folder)
   reconstruction:
     voxel_spacing: 0.01
     v_bnds: [-0.35, 0.35]
@@ -42,6 +42,9 @@ tomography:
 multiprocessing:
   num_cpus: half
 ```
+
+The pipeline finds the three h5 files from a file set in the yml, else in `<sample_dir>/<scan>/nf/` for scans
+`scan - 2` (dark), `scan - 1` (bright) and `scan`, else as the files named in the spec log in `tomo_dir`.
 
 Files and scan description go in the yml: the spec log and scan, the h5 files, the detector, the grid and the
 processing thresholds. Options that control a run are command-line flags (`--layer-index`, `--powder-open-um`,

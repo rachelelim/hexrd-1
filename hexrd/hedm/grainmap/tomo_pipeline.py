@@ -11,8 +11,10 @@ Stages (run in this order; a stage is skipped if its output exists, unless ``for
 The scan is described by the yml (nf_config format): ``tomography: spec: {log, scan, tomo_dir}``,
 ``input_files: detector_file``, ``analysis_name``, ``tomography: reconstruction:`` (``v_bnds``,
 ``voxel_spacing``, the grid) and ``tomography: processing:``. Anything the yml leaves out comes from
-``DEFAULT_CONFIG``. If ``tomography: bright: filename`` or ``dark: filename`` are set they are used
-instead of the files found from the spec log. The run's complete config is written to
+``DEFAULT_CONFIG``. The three h5 files are found, in order of preference: from ``tomography: dark / bright /
+tomo_images: filename`` if set; else, if ``tomography: spec: sample_dir`` is set, as the retiga file in
+<sample_dir>/<scan>/nf/ of the dark (scan - 2), bright (scan - 1) and tomo scan; else as the files named in the
+spec log, looked for in ``tomography: spec: tomo_dir``. The run's complete config is written to
 <run_dir>/tomo_config.yml, with the three h5 filenames and ``num_images`` filled in.
 """
 import contextlib
@@ -112,37 +114,61 @@ def spec_step(scan):
     return None
 
 
-def locate(scan_number, scans, tomo_dir, dark=None, bright=None, dry_run=False):
-    """(dark, bright, tomo) retiga h5 paths for the tomo scan, checked against the spec log.
+def find_in_scan_dir(sample_dir, scan_number, role, spec_name=None):
+    """The retiga h5 file of a scan in <sample_dir>/<scan>/nf/.
 
-    The dark is scan - 2 and the bright is scan - 1. ``dark`` and ``bright`` override them.
+    If the folder holds several, the one named in the spec log is used; otherwise they are ambiguous.
+    """
+    folder = Path(sample_dir) / str(scan_number) / 'nf'
+    if not folder.is_dir():
+        raise PipelineError(f'{role}: {folder} does not exist (sample_dir {sample_dir}, scan {scan_number})')
+    files = sorted(folder.glob('retiga_*.h5'))
+    if spec_name and (folder / spec_name).exists():
+        return folder / spec_name
+    if len(files) == 1:
+        return files[0]
+    if not files:
+        raise PipelineError(f'{role}: no retiga_*.h5 file in {folder}')
+    raise PipelineError(f'{role}: {len(files)} retiga_*.h5 files in {folder} ({", ".join(f.name for f in files)}) and the '
+                        'spec log does not say which; set the file in the yml (tomography: dark / bright / tomo_images: filename)')
+
+
+def locate(scan_number, scans, tomo_dir, dark=None, bright=None, tomo=None, dry_run=False, sample_dir=None):
+    """(dark, bright, tomo) retiga h5 paths for the tomo scan.
+
+    The dark is scan - 2 and the bright is scan - 1. A file given in ``dark``, ``bright`` or ``tomo`` is used as is.
+    Otherwise, with ``sample_dir``, each is the retiga file in <sample_dir>/<scan>/nf/; without it, each is the file
+    named in the spec log, looked for in ``tomo_dir`` (and the numbers are checked against the log).
     """
     s = scans[scan_number]
     if not s.is_tomo:
         log(f'WARNING: scan {scan_number} was not preceded by the "doing the tomography scan" note')
 
-    def num(sc):
-        return int(re.search(r'retiga_(\d+)', sc.retiga_file).group(1))
-
+    given = {'dark': dark, 'bright': bright, 'tomo': tomo}
     names = {}
     for role, n in (('dark', scan_number - 2), ('bright', scan_number - 1), ('tomo', scan_number)):
+        if given[role]:
+            names[role] = Path(given[role])
+            continue
         sc = scans.get(n)
-        if sc is None or not sc.retiga_file:
-            if role in ('dark', 'bright') and (dark if role == 'dark' else bright):
-                continue
+        spec_name = Path(sc.retiga_file).name if sc is not None and sc.retiga_file else None
+        if sample_dir:
+            names[role] = find_in_scan_dir(sample_dir, n, role, spec_name)
+        elif spec_name:
+            names[role] = Path(tomo_dir) / spec_name
+        else:
             raise PipelineError(f'scan {n} ({role}) has no retiga file in spec.log')
-        names[role] = Path(tomo_dir) / Path(sc.retiga_file).name
-    try:
-        consecutive = (num(scans[scan_number - 2]) + 1 == num(scans[scan_number - 1])
-                       and num(scans[scan_number - 1]) + 1 == num(s))
-    except (KeyError, AttributeError):
-        consecutive = False
-    if not consecutive and not (dark and bright):
-        log('WARNING: dark/bright/tomo retiga numbers are not consecutive; check the dark and bright filenames in the yml')
-    if dark:
-        names['dark'] = Path(dark)
-    if bright:
-        names['bright'] = Path(bright)
+
+    if not sample_dir and not any(given.values()):
+        def num(sc):
+            return int(re.search(r'retiga_(\d+)', sc.retiga_file).group(1))
+        try:
+            consecutive = (num(scans[scan_number - 2]) + 1 == num(scans[scan_number - 1])
+                           and num(scans[scan_number - 1]) + 1 == num(s))
+        except (KeyError, AttributeError):
+            consecutive = False
+        if not consecutive:
+            log('WARNING: dark/bright/tomo retiga numbers are not consecutive; check the dark and bright filenames in the yml')
     missing = [str(p) for p in names.values() if not p.exists()]
     if missing and not dry_run:
         raise PipelineError('h5 file(s) not found: ' + ', '.join(missing))
@@ -162,7 +188,7 @@ def check_dark_bright(names):
                             'filenames in the yml to override')
 
 
-def run_config(cfg, names, scan, spec_log, tomo_dir, analysis, run_dir):
+def run_config(cfg, names, scan, spec_log, tomo_dir, analysis, run_dir, sample_dir=None):
     """The config dict of this run: the defaults, then the user's yml, then what the spec log determines."""
     base = yaml.safe_load(DEFAULT_CONFIG)
     d = nf_config.utils.merge_dicts(base, copy.deepcopy(cfg._cfg))
@@ -179,6 +205,8 @@ def run_config(cfg, names, scan, spec_log, tomo_dir, analysis, run_dir):
     t['tomo_images']['num_images'] = scan.npoints
     t['spec'] = {'log': str(Path(spec_log).resolve()), 'scan': int(scan.number),
                  'tomo_dir': str(Path(tomo_dir).resolve())}
+    if sample_dir:
+        t['spec']['sample_dir'] = str(sample_dir)
     return d
 
 
@@ -302,8 +330,11 @@ def run_pipeline(cfg, options=None):
     if scan_number not in scans:
         raise PipelineError(f'scan {scan_number} not in {spec_log}')
     scan = scans[scan_number]
+    sample_dir = tomo.spec.sample_dir
     names = locate(scan_number, scans, tomo_dir, dark=tomo.dark.filename if _has(cfg, 'dark') else None,
-                   bright=tomo.bright.filename if _has(cfg, 'bright') else None, dry_run=opts.dry_run)
+                   bright=tomo.bright.filename if _has(cfg, 'bright') else None,
+                   tomo=tomo.tomo_images.filename if _has(cfg, 'tomo_images') else None,
+                   dry_run=opts.dry_run, sample_dir=sample_dir)
     step = spec_step(scan)
     log(f'scan {scan_number}: {scan.command} ({scan.npoints} points, {step} deg/trigger)')
     log('dark', names['dark'].name, '| bright', names['bright'].name, '| tomo', names['tomo'].name, '| run dir', run_dir)
@@ -315,7 +346,7 @@ def run_pipeline(cfg, options=None):
     if 'setup' in stages:
         if not opts.dry_run:
             check_dark_bright(names)
-            d = run_config(cfg, names, scan, spec_log, tomo_dir, analysis, run_dir)
+            d = run_config(cfg, names, scan, spec_log, tomo_dir, analysis, run_dir, sample_dir)
             nf_config.save([nf_config.nf_root.NFRootConfig(d)], run_yml)
             log('setup done: tomo_config.yml written')
         else:
@@ -385,7 +416,10 @@ def run_pipeline(cfg, options=None):
         else:
             smooth_mask_file(cur, dst, opts.smooth_sigma)
         cur = dst
-    log('final mask:', cur)
+    if Path(cur).exists():
+        log('final mask:', cur)
+    else:
+        log('no mask yet: the recon stage has not been run in', run_dir)
     return cur
 
 

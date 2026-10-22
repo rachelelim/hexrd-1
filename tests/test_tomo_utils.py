@@ -182,14 +182,17 @@ class TestTomographyConfig(unittest.TestCase):
         self.assertIsNone(tomo.spec.log)
         self.assertIsNone(tomo.spec.scan)
         self.assertIsNone(tomo.spec.tomo_dir)
+        self.assertIsNone(tomo.spec.sample_dir)
         self.assertIsNone(tomo.missing_slots)
         self.assertIsNone(tomo.theta_file)
         self.assertIsNone(tomo.deg_per_frame)
 
     def test_new_keys_are_read(self):
-        tomo = self.cfg(spec={'log': 'spec.log', 'scan': 23, 'tomo_dir': '/data'}, missing_slots='slots.txt',
+        tomo = self.cfg(spec={'log': 'spec.log', 'scan': 23, 'tomo_dir': '/data', 'sample_dir': '/sample'},
+                        missing_slots='slots.txt',
                         theta_file='theta.npy', deg_per_frame=0.25).tomography
-        self.assertEqual((tomo.spec.log, tomo.spec.scan, tomo.spec.tomo_dir), ('spec.log', 23, '/data'))
+        self.assertEqual((tomo.spec.log, tomo.spec.scan, tomo.spec.tomo_dir, tomo.spec.sample_dir),
+                         ('spec.log', 23, '/data', '/sample'))
         self.assertEqual((tomo.missing_slots, tomo.theta_file, tomo.deg_per_frame), ('slots.txt', 'theta.npy', 0.25))
 
 

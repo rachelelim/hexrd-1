@@ -51,8 +51,8 @@ What the commands read:
 |---|---|
 | `analysis_name`, `output_directory` | output names and folder |
 | `input_files: detector_file` | pixel size, rotation-axis offset, number of rows |
-| `tomography: spec: {log, scan, tomo_dir}` | the spec log and the tomography scan in it; `tomo_dir` is the folder with the `retiga_*.h5` files (pipeline) |
-| `tomography: bright/dark/tomo_images: filename` | the three h5 files. `reconstruct` needs them. In `pipeline` they are found from the spec log; set `bright` or `dark` to override one |
+| `tomography: spec: {log, scan, sample_dir, tomo_dir}` | the spec log and the tomography scan in it (pipeline). The h5 files are found in `sample_dir` (as `<sample_dir>/<scan>/nf/retiga_*.h5`) or in `tomo_dir` (a flat folder); see Inputs |
+| `tomography: bright/dark/tomo_images: filename` | the three h5 files. `reconstruct` needs them. In `pipeline` they are found as described under Inputs; a file set here is used as it is |
 | `tomography: missing_slots`, `theta_file`, `deg_per_frame` | optional: dropped-frame file, an angle file (.npy), the angular step |
 | `tomography: ome_start, ome_end` | angle range if the spec log is not used |
 | `tomography: reconstruction:` | `voxel_spacing`, `v_bnds`, the x/z grid |
@@ -70,10 +70,18 @@ an option and the yml both give a value, the option wins: for example `--spec-lo
      "doing the tomography scan";
    - scan `N-2`: dark field and scan `N-1`: bright field (both `flyscan ome 0 10 20 <exposure>`, 21 frames).
    Each scan's `Retiga #0 saved last image to .../retiga_XXXXXX.h5` line gives its image file.
-   The pipeline warns if the retiga numbers are not consecutive and stops if the dark looks brighter than
-   the bright; set `tomography: dark: filename` or `bright: filename` to use other files.
-2. **The three `retiga_*.h5` files**, all in one folder (`tomography: spec: tomo_dir`). Dataset `entry/data/data`,
-   one frame per chunk, with `NDAttributes` timestamps.
+   The pipeline stops if the dark looks brighter than the bright.
+2. **The three `retiga_*.h5` files** (dark, bright and tomo; dataset `entry/data/data`, one frame per chunk, with
+   `NDAttributes` timestamps). `pipeline` finds each one, in this order:
+   1. a file set in the yml (`tomography: dark: filename`, `bright: filename`, `tomo_images: filename`), used as it is;
+   2. with `tomography: spec: sample_dir`: the retiga file in `<sample_dir>/<scan>/nf/`, for the dark scan
+      (`scan - 2`), the bright scan (`scan - 1`) and the tomo scan. For example `sample_dir:
+      /p/vast1/trimet/chess_sep26/lind-4275-b/diamond-1a` and `scan: 23` look in `.../diamond-1a/21/nf`,
+      `.../22/nf` and `.../23/nf`. The names in the spec log are not needed. If a folder holds several
+      `retiga_*.h5` files, the one named in the spec log is used; if none matches, the run stops and asks you to
+      set the file in the yml;
+   3. otherwise the file named in the spec log, looked for in `tomography: spec: tomo_dir` (default: the current
+      folder), with a warning if the dark, bright and tomo retiga numbers are not consecutive.
 3. **A detector yml** (`retiga_e7.yml`): pixel size (0.9 um here) and the rotation-axis column offset
    (`tvec[0]`, 0 here).
 

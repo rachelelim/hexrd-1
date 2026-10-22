@@ -21,19 +21,22 @@ experiment:
 
 
 tomography:
-  # The scan. `pipeline` finds the dark (scan - 2), bright (scan - 1) and tomo h5 files from the spec log,
-  # looking for them in tomo_dir. `reconstruct` can read the angular step from it too.
+  # The scan. `pipeline` finds the dark (scan - 2), bright (scan - 1) and tomo h5 files in one of two ways:
+  #   sample_dir: the retiga file in <sample_dir>/<scan>/nf/ of each of the three scans, or
+  #   tomo_dir:   the files named in the spec log, in one flat folder.
+  # `reconstruct` can read the angular step from the spec log too.
   spec:
     log: /path/to/spec.log
     scan: 23 # spec scan number of the tomography scan
-    tomo_dir: /path/to/folder/with/retiga/h5/files
+    sample_dir: /path/to/sample # e.g. /p/vast1/trimet/chess_sep26/lind-4275-b/diamond-1a (scan folders 21, 22, 23 inside)
+    # tomo_dir: /path/to/folder/with/retiga/h5/files # instead of sample_dir
 
   img_stem: nf_
   filetype: h5
   num_digits: 6
 
   # The h5 files. `reconstruct` needs these three lines; `pipeline` fills them in itself (leave them out), and
-  # uses a bright or dark file set here instead of the one found from the spec log.
+  # uses any file set here instead of the one it would find.
   # bright:
   #   filename: /path/to/retiga_012546.h5
   # dark:

@@ -179,6 +179,95 @@ class TestOptions(unittest.TestCase):
             run.cleanup()
 
 
+class TestSampleDir(unittest.TestCase):
+    """The files are found as <sample_dir>/<scan>/nf/retiga_*.h5, not in tomo_dir."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.sample = self.dir / 'sample'
+        self.sample.mkdir()
+        self.dark, self.bright, self.tomo = T.write_sample_dir(self.sample)
+        self.log = T.write_spec_log(self.dir / 'spec.log', 90, (), numbers=(21, 22, 23), tomo_h5_dir='/not/here')
+        self.detector = T.write_instrument(self.dir / 'det.yml')
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def cfg(self, **more):
+        kw = dict(spec_log=self.log, spec_scan=23, sample_dir=self.sample, analysis='synthetic')
+        path = T.write_config(self.dir / 'pipeline.yml', self.detector, **{**kw, **more})
+        return nf_config.open_file(str(path))[0]
+
+    def setup_config(self, cfg):
+        run_dir = self.dir / 'run'
+        run_pipeline(cfg, PipelineOptions(stages=['setup'], run_dir=str(run_dir)))
+        return yaml.safe_load((run_dir / 'tomo_config.yml').read_text())['tomography']
+
+    def test_files_are_found_by_scan_number(self):
+        t = self.setup_config(self.cfg())
+        self.assertEqual(Path(t['dark']['filename']).resolve(), self.dark.resolve())
+        self.assertEqual(Path(t['bright']['filename']).resolve(), self.bright.resolve())
+        self.assertEqual(Path(t['tomo_images']['filename']).resolve(), self.tomo.resolve())
+        self.assertEqual(t['spec']['sample_dir'], str(self.sample))
+
+    def test_the_names_in_the_spec_log_are_not_needed(self):
+        text = self.log.read_text().splitlines()
+        self.log.write_text('\n'.join(line for line in text if not ('retiga_000021' in line or 'retiga_000022' in line)))
+        t = self.setup_config(self.cfg())
+        self.assertEqual(Path(t['dark']['filename']).resolve(), self.dark.resolve())
+
+    def test_sample_dir_wins_over_tomo_dir(self):
+        t = self.setup_config(self.cfg(tomo_dir=self.dir / 'nowhere'))
+        self.assertEqual(Path(t['tomo_images']['filename']).resolve(), self.tomo.resolve())
+
+    def test_spec_log_name_picks_one_of_several_files(self):
+        spec_named = self.tomo.parent / 'retiga_000023.h5'      # the name in the spec log
+        T.write_h5(spec_named, np.zeros((3, T.ROWS, T.COLS)))
+        t = self.setup_config(self.cfg())
+        self.assertEqual(Path(t['tomo_images']['filename']).name, 'retiga_000023.h5')
+
+    def test_several_files_and_no_name_to_choose_by(self):
+        T.write_h5(self.bright.parent / 'retiga_900999.h5', np.zeros((3, T.ROWS, T.COLS)))
+        text = self.log.read_text().replace('retiga_000022', 'retiga_zzz')
+        self.log.write_text(text)
+        with self.assertRaisesRegex(PipelineError, 'bright: 2 retiga_\\*.h5 files'):
+            run_pipeline(self.cfg(), PipelineOptions(stages=['setup']))
+
+    def test_missing_scan_folder(self):
+        import shutil
+        shutil.rmtree(self.sample / '21')
+        with self.assertRaisesRegex(PipelineError, 'dark: .*21/nf does not exist'):
+            run_pipeline(self.cfg(), PipelineOptions(stages=['setup']))
+
+    def test_folder_without_a_retiga_file(self):
+        self.tomo.unlink()
+        with self.assertRaisesRegex(PipelineError, 'tomo: no retiga_\\*.h5 file'):
+            run_pipeline(self.cfg(), PipelineOptions(stages=['setup']))
+
+    def test_file_set_in_the_yml_wins(self):
+        other = self.dir / 'other_dark.h5'
+        T.write_h5(other, np.full((5, T.ROWS, T.COLS), T.DARK))
+        t = self.setup_config(self.cfg(extra_tomography={'dark': {'filename': str(other)}}))
+        self.assertEqual(Path(t['dark']['filename']).name, 'other_dark.h5')
+        self.assertEqual(Path(t['bright']['filename']).resolve(), self.bright.resolve())
+
+    def test_tomo_file_set_in_the_yml_wins(self):
+        other = self.dir / 'other_tomo.h5'
+        T.write_h5(other, np.zeros((3, T.ROWS, T.COLS)))
+        t = self.setup_config(self.cfg(extra_tomography={'tomo_images': {'filename': str(other)}}))
+        self.assertEqual(Path(t['tomo_images']['filename']).name, 'other_tomo.h5')
+
+    def test_reconstruction_from_a_sample_dir(self):
+        cfg = self.cfg()
+        final = run_pipeline(cfg, PipelineOptions(stages=['setup', 'missing', 'recon'], run_dir=str(self.dir / 'run'),
+                                                  powder_open_um=0))
+        mask = np.load(final)['mask']
+        ideal = T.ideal_mask(mask.shape[1:])
+        for layer in mask:
+            self.assertGreater(iou(layer, ideal), 0.7)
+
+
 class TestErrors(unittest.TestCase):
 
     def test_unknown_stage(self):

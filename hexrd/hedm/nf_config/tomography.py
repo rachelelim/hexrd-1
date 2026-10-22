@@ -77,6 +77,11 @@ class TomoSpecConfig(Config):
         """Folder with the retiga h5 files (used by the pipeline)"""
         return self._cfg.get('tomography:spec:tomo_dir', None)
 
+    @property
+    def sample_dir(self):
+        """Folder with one folder per scan, <sample_dir>/<scan>/nf/retiga_*.h5 (used by the pipeline)"""
+        return self._cfg.get('tomography:spec:sample_dir', None)
+
 
 class BrightConfig(Config):
 

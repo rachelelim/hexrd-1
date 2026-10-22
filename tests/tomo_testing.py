@@ -113,8 +113,8 @@ def write_spec_log(path, n_slots=90, dropped=(), numbers=(1, 2, 3), tomo_h5_dir=
 
 
 def write_config(path, detector, bright=None, dark=None, tomo=None, num_images=90, analysis='synthetic',
-                 output_dir='.', spec_log=None, spec_scan=None, tomo_dir=None, num_cpus=2, v_bnds=None,
-                 extra_tomography=None):
+                 output_dir='.', spec_log=None, spec_scan=None, tomo_dir=None, sample_dir=None, num_cpus=2,
+                 v_bnds=None, extra_tomography=None):
     """An nf_config yml for the synthetic scan. Leave the h5 files out for ``hexrd tomo pipeline``, which
     finds them from the spec log."""
     tomography = {
@@ -132,6 +132,8 @@ def write_config(path, detector, bright=None, dark=None, tomo=None, num_images=9
         tomography['spec'] = {'log': str(spec_log), 'scan': spec_scan}
         if tomo_dir is not None:
             tomography['spec']['tomo_dir'] = str(tomo_dir)
+        if sample_dir is not None:
+            tomography['spec']['sample_dir'] = str(sample_dir)
     tomography.update(extra_tomography or {})
     cfg = {'analysis_name': analysis, 'output_directory': str(output_dir),
            'input_files': {'detector_file': str(detector)},
@@ -140,3 +142,21 @@ def write_config(path, detector, bright=None, dark=None, tomo=None, num_images=9
     with open(path, 'w') as f:
         yaml.safe_dump(cfg, f)
     return path
+
+
+def write_sample_dir(root, n_slots=90, dropped=(), scans=(21, 22, 23), file_numbers=(900021, 900022, 900023)):
+    """<root>/<scan>/nf/retiga_<number>.h5 for the dark, bright and tomography scans, as on the beamline storage.
+
+    The file numbers differ from the scan numbers (and from the names ``write_spec_log`` puts in the log), so
+    the files have to be found by looking in the scan folders. Returns the three paths."""
+    root = Path(root)
+    stage = root / '_stage'
+    stage.mkdir(parents=True)
+    staged = write_scan_files(stage, n_slots, dropped, numbers=file_numbers)
+    paths = []
+    for scan, src in zip(scans, staged):
+        folder = root / str(scan) / 'nf'
+        folder.mkdir(parents=True)
+        paths.append(src.rename(folder / src.name))
+    stage.rmdir()
+    return paths
