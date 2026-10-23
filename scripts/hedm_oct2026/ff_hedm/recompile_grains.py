@@ -63,7 +63,10 @@ analysis_stem = "%s_" % samp
 # State that hexrd has just fit; the grains it started from are in state load_num - 1
 load_num = 1
 num_layers = 4
-location = 'both'  # as in the stitching script
+# Where the seed grains of each layer are taken from, and how far beyond the illuminated
+# volume, as in the stitching script (see there for what the options are)
+location = 'both'
+seed_margin = 0.5
 
 # Directory with the master and grain_nums files and the hexrd analysis directories
 output_dir_base = './'
@@ -175,7 +178,8 @@ write_grains_files(output_dir, analysis_stem, grain_data, load_num, location=loc
 
 make_grain_lists(analysis_stem, grain_data, load_num, beam_height, pos_offset, output_dir,
                  location=location, low_comp_thresh=low_comp_thresh,
-                 high_chi2_thresh=high_chi2_thresh, beam_center_y=beam_center_y)
+                 high_chi2_thresh=high_chi2_thresh, beam_center_y=beam_center_y,
+                 seed_margin=seed_margin)
 
 if write_next_yaml:
     write_yaml(initial_yaml, image_fstem, samp, analysis_stem, load_num + 1,

@@ -53,7 +53,17 @@ detector_file = data_dir + '/dexela_ruby_composite.hexrd'
 load_num = 0
 
 
-location = 'both'  # generally bottom for tension and top for compression
+# Where the seed grains of each layer are taken from: the volume that the beam illuminates (the
+# beam height around the beam center) and a margin beyond it, which takes in grains from just
+# outside that could move into it.  y is up in the lab frame.
+#   'both'  - the margin is above and below the illuminated volume
+#   'above' - the margin is only above it, toward higher y
+#   'below' - the margin is only below it, toward lower y
+# (The old names were 'top' for 'above' and 'bottom' for 'below', with the note that it is
+# generally below for tension and above for compression.)
+location = 'both'
+# Size of that margin, as a fraction of the beam height
+seed_margin = 0.5
 
 # 'diamond-1a/FF/%s_S%%d_L%%d/grains_crop.out' % samp
 grain_file_stem = data_dir + '/%s/FF/%s_S%%d_L%%d_grains.out' % (samp, samp)
@@ -301,7 +311,8 @@ write_grains_files(output_dir, analysis_stem,
 if make_layer_grain_lists:
     make_grain_lists(analysis_stem, culled_grain_data, load_num,
                      beam_height, pos_offset, output_dir, location=location,
-                     v_pos_corr=v_pos_corr, beam_center_y=beam_center_y)
+                     v_pos_corr=v_pos_corr, beam_center_y=beam_center_y,
+                     seed_margin=seed_margin)
 
 if write_next_yaml:
     write_yaml(initial_yaml, image_fstem, samp, analysis_stem, load_num + 1,

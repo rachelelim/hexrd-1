@@ -42,9 +42,18 @@ def master_file_name(analysis_stem, state_num):
     return '%sS%03d_master.out' % (analysis_stem, state_num)
 
 
+# Where the seed grains of a layer are taken from: the volume that the beam illuminates, which
+# is the beam height around the center of the beam, and a margin beyond it (see layer_bounds).
+# y is up in the lab frame, so 'above' is toward higher y and 'below' toward lower y.
+#   'both'  - the margin is above and below the illuminated volume
+#   'above' - the margin is only above it
+#   'below' - the margin is only below it
+LOCATIONS = ('both', 'above', 'below')
+
+
 def seed_file_name(state_num, layer_num, location='both'):
     """Seed grains.out of a layer; state_num is the state that it seeds"""
-    where = {'both': '', 'top': 'top_', 'bottom': 'bottom_'}[location]
+    where = {'both': '', 'above': 'above_', 'below': 'below_'}[location]
     return 'S%d_seed_%sL%d_grains.out' % (state_num, where, layer_num)
 
 
@@ -230,34 +239,45 @@ def write_grains_files(output_dir, analysis_stem, grain_data, state_num, layer_n
             f.write(row_fmt % tuple(row))
 
 
-def layer_bounds(vert_off, beam_height, location='both', v_pos_corr=0.0, beam_center_y=0.0):
-    """Y range, (lower, upper), of the grains that can be in each layer
+def layer_bounds(vert_off, beam_height, location='both', v_pos_corr=0.0, beam_center_y=0.0,
+                 seed_margin=0.5):
+    """Y range, (lower, upper), of the grains that are taken as seeds for each layer
 
-    The range reaches 1.5 beam heights to the side(s) of the layer that
-    'location' asks for (below for 'bottom', above for 'top', both for 'both').
-    The first layer has no upper limit.  The windows are around the center of the
-    beam, beam_center_y above the middle of the layer in the frame of the layer.
+    This is the volume that the beam illuminates in the layer, beam_height around the
+    center of the beam (beam_center_y above the middle of the layer, in the frame of the
+    layer), and a margin of seed_margin beam heights beyond it, on the side(s) that
+    location asks for, see LOCATIONS.  The margin takes in grains from just outside of
+    the illuminated volume, which can move into it.  The highest layer has no upper
+    limit and the lowest layer has no lower limit, so that the grains beyond the layers
+    on the outside are included too.
     """
-    below, above = {'bottom': (1.5, 0.5), 'top': (0.5, 1.5), 'both': (1.5, 1.5)}[location]
+    if location not in LOCATIONS:
+        raise ValueError('location has to be one of %s, not %r' % (', '.join(LOCATIONS), location))
+    margin = seed_margin * beam_height
+    margin_below = margin if location in ('both', 'below') else 0.0
+    margin_above = margin if location in ('both', 'above') else 0.0
     bounds = []
-    for i, off in enumerate(vert_off):
-        center = off + beam_center_y
-        lower = center - below*beam_height - v_pos_corr
-        upper = np.inf if i == 0 else center + above*beam_height - v_pos_corr
-        bounds.append((lower, upper))
+    for off in vert_off:
+        center = off + beam_center_y - v_pos_corr
+        bounds.append((center - beam_height / 2 - margin_below,
+                       center + beam_height / 2 + margin_above))
+    bounds[int(np.argmax(vert_off))] = (bounds[int(np.argmax(vert_off))][0], np.inf)
+    bounds[int(np.argmin(vert_off))] = (-np.inf, bounds[int(np.argmin(vert_off))][1])
     return bounds
 
 
 def make_grain_lists(analysis_stem, grain_data, state_num, beam_height, pos_offset, output_dir,
                      location='both', v_pos_corr=0.0, low_comp_thresh=None, high_chi2_thresh=None,
-                     beam_center_y=0.0):
+                     beam_center_y=0.0, seed_margin=0.5):
     """Make the seed grains.out file and grain number list of each layer for state_num + 1
 
     grain_data are the compiled grains of state_num, with positions in the
     sample frame.  A grain is in a layer if it is within the y bounds of
-    layer_bounds, and, when the thresholds are given, has completeness of at
-    least low_comp_thresh and chi2 below high_chi2_thresh.  The seed grains are
-    moved into the frame of their layer, which keeps the beam center at beam_center_y.
+    layer_bounds, which are the illuminated volume and the margin of seed_margin
+    beam heights on the side(s) that location asks for, and, when the thresholds
+    are given, has completeness of at least low_comp_thresh and chi2 below
+    high_chi2_thresh.  The seed grains are moved into the frame of their layer,
+    which keeps the beam center at beam_center_y.
     """
     vert_off = pos_offset[1]
     y_loc = grain_data[:, 7]
@@ -268,7 +288,7 @@ def make_grain_lists(analysis_stem, grain_data, state_num, beam_height, pos_offs
         keep &= grain_data[:, 2] < high_chi2_thresh
     print('There are %d grains in the compiled list' % len(grain_data))
 
-    bounds = layer_bounds(vert_off, beam_height, location, v_pos_corr, beam_center_y)
+    bounds = layer_bounds(vert_off, beam_height, location, v_pos_corr, beam_center_y, seed_margin)
     for i, (lower, upper) in enumerate(bounds):
         used = np.where(keep & (y_loc >= lower) & (y_loc <= upper))[0]
         layer_grain_data = grain_data[used, :]
