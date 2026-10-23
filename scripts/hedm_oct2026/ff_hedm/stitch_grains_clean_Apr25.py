@@ -25,6 +25,7 @@ from hexrd import material
 from hexrd import valunits
 
 import shutil
+import h5py
 import yaml
 
 
@@ -43,7 +44,8 @@ x_ray_e = 61.332
 
 
 num_layers = 4
-det_names = ['ff1', 'ff2']
+# hexrd instrument file; its detector keys and their panels are used for the yaml image series
+detector_file = data_dir + '/dexela_ruby_composite.hexrd'
 
 load_num = 0
 
@@ -380,7 +382,22 @@ def write_grains_files(output_dir, analysis_stem, grain_data, state_num, layer_n
     return
 
 
-def write_yaml(init_yaml, image_fstem, sample, analysis_stem, state_num, num_layers, first_scan_num, first_file_num, output_dir, det_keys=['ff1', 'ff2'], location='both'):
+def read_detector_panels(instrument_file):
+    """Panels of each detector in a hexrd instrument file, {detector key: [panel names]}
+
+    The detector key is the panel's 'group' (ff1 for ff1_0_0, ff1_0_1, ...),
+    or the panel name itself for panels that are not grouped.
+    """
+    det_panels = {}
+    with h5py.File(instrument_file, 'r') as f:
+        for panel in f['instrument/detectors']:
+            grp = f['instrument/detectors'][panel]
+            key = grp['group'][()].decode() if 'group' in grp else panel
+            det_panels.setdefault(key, []).append(panel)
+    return det_panels
+
+
+def write_yaml(init_yaml, image_fstem, sample, analysis_stem, state_num, num_layers, first_scan_num, first_file_num, output_dir, det_panels, location='both'):
     yaml_dict = []
     initial_yaml_info = yaml.load(open(initial_yaml, "r"), Loader=yaml.Loader)
     yaml_dict.append(initial_yaml_info)
@@ -402,10 +419,10 @@ def write_yaml(init_yaml, image_fstem, sample, analysis_stem, state_num, num_lay
         # for image_file in files:
 
         # image_file = image_fstem % (state_num, layer_num+111, det)
-        for det in det_keys:
+        for det, panels in det_panels.items():
             this_dict = {'file': image_fstem % (sample, first_scan_num + layer_num, det, first_file_num + layer_num),
                          'args': {},
-                         'panel': ['%s_0_0' % det, '%s_0_1' % det, '%s_1_0' % det, '%s_1_1' % det]}
+                         'panel': panels}
         # 'file': image_file,
         # 'args': {},
         # 'panel': det}
@@ -514,6 +531,6 @@ if make_layer_grain_lists:
 if write_next_yaml:
     write_yaml(initial_yaml, image_fstem, samp, analysis_stem, load_num + 1,
                num_layers, first_scan_num, first_file_num, output_dir,
-               det_keys=det_names, location=location)
+               det_panels=read_detector_panels(detector_file), location=location)
 
 # %%
