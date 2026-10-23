@@ -39,8 +39,7 @@ analysis_stem = "%s_" % samp
 data_dir = "/Users/lim37/Library/CloudStorage/OneDrive-LLNL/TriMet - General/CHESS_2026-09"
 mat_file_loc = data_dir + "/materials_316L.h5"
 mat_name = "316L"
-dmin = 0.5  # not really necessary
-x_ray_e = 61.332
+# the beam energy comes from detector_file and dmin from the materials file
 
 
 num_layers = 4
@@ -220,12 +219,20 @@ def assemble_grain_data(grain_data_list, pos_offset=None, rotation_offset=None):
     return grain_data, old_grain_numbers
 
 
-def load_pdata(filename, d_min, energy, mat):
-    """Note: fixed for new materials files as of hexrd v0.8.x"""
+def read_beam_energy(instrument_file):
+    """Beam energy in keV from a hexrd instrument file"""
+    with h5py.File(instrument_file, 'r') as f:
+        return float(np.squeeze(f['instrument/beam/energy'][()]))
+
+
+def load_pdata(filename, energy, mat):
+    """Plane data of a material, at the beam energy and with the dmin saved in the materials file
+
+    Note: fixed for new materials files as of hexrd v0.8.x"""
 
     kev = valunits.valWUnit("beam_energy", "energy", energy, "keV")
-    dmin = valunits.valWUnit("dmin", "length", d_min, "angstrom")
-    mats = material.load_materials_hdf5(filename, dmin=dmin, kev=kev)
+    mats = material.load_materials_hdf5(filename, kev=kev)
+    print('Material %s: beam energy %g keV, dmin %s' % (mat, energy, mats[mat].dmin))
     pd = mats[mat].planeData
     return pd
 
@@ -461,7 +468,8 @@ def write_yaml(init_yaml, image_fstem, sample, analysis_stem, state_num, num_lay
 
 
 # % Load data
-pd = load_pdata(mat_file_loc, dmin, x_ray_e, mat_name)
+x_ray_e = read_beam_energy(detector_file)
+pd = load_pdata(mat_file_loc, x_ray_e, mat_name)
 qsyms = pd.q_sym
 
 # %%
