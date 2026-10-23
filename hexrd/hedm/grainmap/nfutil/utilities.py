@@ -90,31 +90,6 @@ def gen_nf_test_grid(v_bnds, voxel_spacing, x_center=0., z_center=0., x_length=1
     return test_crds, n_crds, Xs, Ys, Zs
 
 
-def gen_nf_test_grid_vertical(v_bnds, voxel_spacing, x_center=0., z_center=0., x_length=1.25):
-
-    # This is designed only for calibration of a single slice along the z direction
-    # So the Z thickness will be one voxel
-    # Zs_list = np.arange(-voxel_spacing/2., voxel_spacing/2, voxel_spacing)
-    # Xs_list = np.arange(-cross_sectional_dim/2.+voxel_spacing /
-    #                     2., cross_sectional_dim/2., voxel_spacing)
-    Zs_list = np.arange(z_center-voxel_spacing/2.,
-                        z_center + voxel_spacing/2, voxel_spacing)
-    Xs_list = np.arange(x_center-x_length/2.,
-                        x_center+x_length/2., voxel_spacing)
-
-    if v_bnds[0] == v_bnds[1]:
-        Xs, Ys, Zs = np.meshgrid(Xs_list, v_bnds[0], Zs_list)
-    else:
-        Xs, Ys, Zs = np.meshgrid(Xs_list, np.arange(
-            v_bnds[0]+voxel_spacing/2., v_bnds[1], voxel_spacing), Zs_list)
-        # note numpy shaping of arrays is goofy, returns(length(y),length(x),length(z))
-
-    test_crds = np.vstack([Xs.flatten(), Ys.flatten(), Zs.flatten()]).T
-    n_crds = len(test_crds)
-
-    return test_crds, n_crds, Xs, Ys, Zs
-
-
 def generate_test_coordinates(v_bnds, voxel_spacing, x_center=0, z_center=0, x_length=None, z_length=None,
                               cross_sectional_dim=1,
                               mask_data_file=None, vertical_motor_position=0.0):
@@ -814,14 +789,14 @@ def calibrate_parameter(experiment, controller, image_stack, calibration_paramet
     # Calculate the test coordinates
     if parameter_number == 4:
         # Testing vertical detector translation
-        test_crds_full, n_crds, Xs, Ys, Zs = gen_nf_test_grid_vertical(
-            experiment.vertical_bounds, experiment.voxel_spacing, experiment.x_center, experiment.z_center, experiment.z_length)
+        # A single slice, one voxel thick in z
+        test_crds_full, n_crds, Xs, Ys, Zs = gen_nf_test_grid(
+            experiment.vertical_bounds, experiment.voxel_spacing, experiment.x_center,
+            experiment.z_center, experiment.z_length, experiment.voxel_spacing)
         to_use = np.arange(len(test_crds_full))
         test_coordinates = test_crds_full[to_use, :]
     else:
         # Testing any of the others
-        # test_crds_full, n_crds, Xs, Ys, Zs = gen_nf_test_grid(experiment.cross_sectional_dimensions, [
-        #                                                       -experiment.voxel_spacing/2, experiment.voxel_spacing], experiment.voxel_spacing)
         test_crds_full, n_crds, Xs, Ys, Zs = gen_nf_test_grid(
             experiment.vertical_bounds, experiment.voxel_spacing, experiment.x_center,
             experiment.z_center, experiment.x_length, experiment.z_length)
