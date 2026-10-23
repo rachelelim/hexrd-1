@@ -18,6 +18,7 @@ import glob
 import hexrd.matrixutil as mutil
 import hexrd.rotations as rot
 import hexrd.symmetry as sym
+from hexrd.core.rotations import quatProduct
 from hexrd import instrument
 from hexrd.cli.fit_grains import write_results
 from hexrd import material
@@ -53,11 +54,16 @@ location = 'both'  # generally bottom for tension and top for compression
 grain_file_stem = data_dir + '/%s/FF/%s_S%%d_L%%d_grains.out' % (samp, samp)
 
 # grain_file_stem = '%s_S%%d_L%%d/grains.out' %(samp)
-initial_yaml = 'inv-diamond-1_S0.yml'
 
+# Optional outputs for the next state
+# Per-layer seed grains.out files (S<next>_seed_L<layer>_grains.out) and the grain_nums_S*_L*.txt lists
+make_layer_grain_lists = True
+# FF config yaml for the next state, built from initial_yaml and image_fstem
+write_next_yaml = False
 
-# %s_%%d_%%s_%%06d-cachefile.npz"%samp
-image_fstem = '../../preprocess_dexelas/diamond-1a/diamond-1a_%d_ff1_%06d-cachefile.npz'
+initial_yaml = 'diamond-1a_S0.yml'
+# image files per scan, filled with (sample, scan number, detector name, file number)
+image_fstem = '../../preprocess_dexelas/diamond-1a/%s_%d_%s_%06d-cachefile.npz'
 first_scan_num = 88
 first_file_num = 403
 # output_dir_base = "/nfs/chess/user/relim/voisin-3061-c/s26-2"
@@ -101,21 +107,6 @@ v_pos_corr = 0.0
 # %%
 
 
-def quat_multiply(q1, q2):
-    """Hamilton product of one quaternion q1 (4,) with quaternions q2 (4, N)
-
-    Quaternions are scalar first, as in hexrd.rotations.
-    """
-    w1, x1, y1, z1 = q1
-    w2, x2, y2, z2 = q2
-    return np.vstack([
-        w1*w2 - x1*x2 - y1*y2 - z1*z2,
-        w1*x2 + x1*w2 + y1*z2 - z1*y2,
-        w1*y2 - x1*z2 + y1*w2 + z1*x2,
-        w1*z2 + x1*y2 - y1*x2 + z1*w2,
-    ])
-
-
 def closest_symmetric_variant(q1, q2, qsyms):
     """Symmetry-equivalent of q2 that is closest to q1
 
@@ -124,7 +115,8 @@ def closest_symmetric_variant(q1, q2, qsyms):
     (and exponential maps).  Returns that variant (sign chosen so that it is in
     the same hemisphere as q1) and the misorientation angle in degrees.
     """
-    variants = quat_multiply(q2, qsyms)
+    # q2 * s for every symmetry operator s; quatProduct(a, b) is b * a
+    variants = quatProduct(qsyms, q2[:, None])
     dots = q1 @ variants
     best = np.argmax(np.abs(dots))
     q2_best = variants[:, best] * np.sign(dots[best])
@@ -388,7 +380,7 @@ def write_grains_files(output_dir, analysis_stem, grain_data, state_num, layer_n
     return
 
 
-def write_yaml(init_yaml, image_fstem, analysis_stem, state_num, num_layers, first_scan_num, first_file_num, output_dir, det_keys=['ff1', 'ff2'], location='both'):
+def write_yaml(init_yaml, image_fstem, sample, analysis_stem, state_num, num_layers, first_scan_num, first_file_num, output_dir, det_keys=['ff1', 'ff2'], location='both'):
     yaml_dict = []
     initial_yaml_info = yaml.load(open(initial_yaml, "r"), Loader=yaml.Loader)
     yaml_dict.append(initial_yaml_info)
@@ -411,7 +403,7 @@ def write_yaml(init_yaml, image_fstem, analysis_stem, state_num, num_layers, fir
 
         # image_file = image_fstem % (state_num, layer_num+111, det)
         for det in det_keys:
-            this_dict = {'file': image_fstem % (first_scan_num + layer_num, det, first_file_num + layer_num),
+            this_dict = {'file': image_fstem % (sample, first_scan_num + layer_num, det, first_file_num + layer_num),
                          'args': {},
                          'panel': ['%s_0_0' % det, '%s_0_1' % det, '%s_1_0' % det, '%s_1_1' % det]}
         # 'file': image_file,
@@ -512,11 +504,16 @@ new_grain_numbers = np.delete(old_grain_numbers, dup_list.astype(int))
 
 # %%
 
-# make_grain_lists(analysis_stem, culled_grain_data, load_num,
-#                  beam_height, pos_offset, output_dir, location=location)
 write_grains_files(output_dir, analysis_stem,
                    culled_grain_data, load_num, location=location)
-# yaml_dict = write_yaml(initial_yaml, image_fstem, analysis_stem,
-#                        load_num+1, num_layers, first_scan_num, first_file_num, output_dir, location=location)
+
+if make_layer_grain_lists:
+    make_grain_lists(analysis_stem, culled_grain_data, load_num,
+                     beam_height, pos_offset, output_dir, location=location)
+
+if write_next_yaml:
+    write_yaml(initial_yaml, image_fstem, samp, analysis_stem, load_num + 1,
+               num_layers, first_scan_num, first_file_num, output_dir,
+               det_keys=det_names, location=location)
 
 # %%
