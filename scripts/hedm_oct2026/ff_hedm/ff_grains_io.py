@@ -1,6 +1,6 @@
 """Shared file handling for the FF stitching and recompile scripts
 
-stitch_grains_clean_Apr25.py runs once, for the first FF state, and
+stitch_grains.py runs once, for the first FF state, and
 recompile_grains.py runs for every state after it.  Both write the same files
 for the next state (the per-layer seed grains.out files, the lists of which
 grains are in each layer and the hexrd fit-grains config yaml), so the file

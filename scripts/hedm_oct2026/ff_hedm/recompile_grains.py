@@ -30,7 +30,7 @@
 Run this after hexrd has fit the grains of every layer of state load_num, i.e.
 after <analysis_stem>S<load_num>_L<layer>/grains.out exist.  It puts the layers
 back together into one grains list, then writes the files for state
-load_num + 1 in the same form as stitch_grains_clean_Apr25.py, which is only
+load_num + 1 in the same form as stitch_grains.py, which is only
 run for the first state:
 
     <stem>S<load_num>_master.out        compiled grains
@@ -39,7 +39,7 @@ run for the first state:
     <stem>S<load_num+1>.yml             hexrd config for the next state (optional)
 
 The settings that describe the experiment (sample, layers, offsets, beam height,
-detector file, image names) have to match the ones in stitch_grains_clean_Apr25.py.
+detector file, image names) have to match the ones in stitch_grains.py.
 """
 
 # %% Import Modules
