@@ -30,17 +30,18 @@ import yaml
 # %% User Input
 ###############################################################################
 
-samp = 'inv-diamond-1'
+samp = 'diamond-1a'
 analysis_stem = "%s_" % samp
 
 # hexrd material file in h5 format
-mat_file_loc = "../../materials_316L.h5"
+data_dir = "/Users/lim37/Library/CloudStorage/OneDrive-LLNL/TriMet - General/CHESS_2026-09"
+mat_file_loc = data_dir + "/materials_316L.h5"
 mat_name = "316L"
 dmin = 0.5  # not really necessary
 x_ray_e = 61.332
 
 
-num_layers = 3
+num_layers = 4
 det_names = ['ff1', 'ff2']
 
 load_num = 0
@@ -49,7 +50,7 @@ load_num = 0
 location = 'both'  # generally bottom for tension and top for compression
 
 # 'diamond-1a/FF/%s_S%%d_L%%d/grains_crop.out' % samp
-grain_file_stem = '%s_S%%d_L%%d_fixed_grains.out' % samp
+grain_file_stem = data_dir + '/%s/FF/%s_S%%d_L%%d_grains.out' % (samp, samp)
 
 # grain_file_stem = '%s_S%%d_L%%d/grains.out' %(samp)
 initial_yaml = 'inv-diamond-1_S0.yml'
@@ -76,12 +77,13 @@ completeness_diff = 0.1  # if two grains are matched, the completenesses are che
 # Rotation offsets exponential maps
 
 
-# If your first layer was the bottom layer, these will be negative to positive Y (CHESS and APS default)
-pos_offset = np.array(
-    [[0., 0., 0.], [-0.475,0., 0.425], [0., 0., 0.]])
+# Vertical (ramsz) motor position of each layer. Layers lower in the sample have a higher ramsz
+# (the motor sits below the sample), so the Y offset applied to each grains.out is -ramsz
+ramsz = np.array([-0.525, -0.125, 0.125, 0.525])
+pos_offset = np.zeros([3, len(ramsz)])
+pos_offset[1, :] = -ramsz
 
-
-beam_height = 0.475
+beam_height = 0.35
 
 rot_offset = None
 
