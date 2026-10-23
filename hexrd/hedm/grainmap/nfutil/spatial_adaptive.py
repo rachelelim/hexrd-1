@@ -21,7 +21,7 @@ from .processor_functions import (
     _refine_from_candidates, _refine_from_candidates_distributor,
     _refine_orientations_at_coordinates, _refine_orientations_distributor,
     _test_orientation_bags_at_coordinates,
-    _test_orientation_bags_at_coordinates_distributor, REFINEMENT_RADII_DEG)
+    _test_orientation_bags_at_coordinates_distributor)
 
 
 def neighbor_table(mask, connectivity=6):

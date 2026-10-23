@@ -51,10 +51,6 @@ class Experiment:
         output_plot_check = cfg.output_plot_check
 
         # reconstruction size parameters
-        # TODO: make cross sectional dims changeable
-        # [1.0,1.0] # mm - [perpendicualr, parallel] to incoming beam direction
-        # if cfg.reconstruction.cross_sectional_dimensions:
-        cross_sectional_dim = cfg.reconstruction.cross_sectional_dimensions
         x_center = cfg.reconstruction.x_center
         z_center = cfg.reconstruction.z_center
         x_length = cfg.reconstruction.x_length
@@ -220,9 +216,6 @@ class Experiment:
         self.remap = cut
         self.vertical_bounds = vertical_bounds
         self.beam_vertical_span = beam_vertical_span
-        # if cross_sectional_dim:
-        #     self.cross_sectional_dimensions = cross_sectional_dim
-        # else:
         self.x_center = x_center
         self.z_center = z_center
         self.x_length = x_length

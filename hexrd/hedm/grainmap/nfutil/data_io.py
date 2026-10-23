@@ -207,7 +207,7 @@ def generate_filepaths_and_omegas(configuration, downselection_number=None):
             meta, configuration.images.loading.sample_raw_data_folder)
 
         # Generate the omega edges from the .par file information
-        omegas, omega_edges_deg = generate_omega_edges(meta, num_imgs)
+        _, omega_edges_deg = generate_omega_edges(meta, num_imgs)
 
     elif configuration.images.loading.load_style == 'direct':
         # Load configuation manually

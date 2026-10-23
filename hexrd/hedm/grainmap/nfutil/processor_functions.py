@@ -485,7 +485,7 @@ def _test_many_orientations_at_many_coordinates(experiment, image_stack, coordin
         for i in np.arange(n_coords):
             coord_to_test = coordinates_to_test[i, :]
             if n_oris == 1:
-                exp_map, confidence, dummy = _test_single_orientation_at_single_coordinate(
+                exp_map, confidence, _ = _test_single_orientation_at_single_coordinate(
                     experiment, image_stack, coord_to_test, orientation_data_to_test)
                 idx = 0
             else:
@@ -515,7 +515,7 @@ def _test_many_orientations_at_many_coordinates(experiment, image_stack, coordin
             orientation_data_to_test = [
                 test_exp_maps[i], test_angles[i], test_rMat_ss[i], test_gvec_cs[i], test_rMat_c[i]]
             if n_coords == 1:
-                exp_maps, confidence, dummy = _test_single_orientation_at_single_coordinate(
+                exp_maps, confidence, _ = _test_single_orientation_at_single_coordinate(
                     experiment, image_stack, coordinates_to_test, orientation_data_to_test)
             else:
                 exp_maps, confidence = _test_single_orientation_at_many_coordinates(

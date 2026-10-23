@@ -98,7 +98,7 @@ def plot_ori_map(grain_map, confidence_map, Xs, Zs, exp_maps,
         fig, axs = plt.subplots(2, 2, constrained_layout=True)
         fig.suptitle('Layer %d' % layer_no)
         # Plot IPF
-        ax1 = axs[0, 0].imshow(rgb_image, interpolation='none')
+        axs[0, 0].imshow(rgb_image, interpolation='none')
         axs[0, 0].title.set_text('IPF')
         axs[0, 0].set_xticks(no_axis, labels=np.round(
             x_axis, 2), rotation='vertical')
@@ -131,7 +131,7 @@ def plot_ori_map(grain_map, confidence_map, Xs, Zs, exp_maps,
 
         # Plot Misorientation or Filler Plot
         if misorientation_map is None:
-            ax4 = axs[1, 1].imshow(
+            axs[1, 1].imshow(
                 np.zeros(np.shape(conf_plot)), interpolation='none')
             axs[1, 1].title.set_text('Filler')
             axs[1, 1].set_xticks(no_axis, labels=np.round(
@@ -144,7 +144,7 @@ def plot_ori_map(grain_map, confidence_map, Xs, Zs, exp_maps,
             misorientation_plot = np.squeeze(
                 misorientation_map[layer_no, :, :])
             misorientation_plot = np.multiply(misorientation_plot, mask)
-            ax4 = axs[1, 1].imshow(misorientation_plot,
+            axs[1, 1].imshow(misorientation_plot,
                                    interpolation='none', cmap='jet')
             axs[1, 1].title.set_text(
                 'Misorientation off Provided Grains.out Orientation')
@@ -161,7 +161,7 @@ def plot_ori_map(grain_map, confidence_map, Xs, Zs, exp_maps,
         fig, axs = plt.subplots(2, 2, constrained_layout=True)
         fig.suptitle('Layer %d' % layer_no)
         # Plot IPF
-        ax1 = axs[0, 0].imshow(rgb_image, interpolation='none')
+        axs[0, 0].imshow(rgb_image, interpolation='none')
         axs[0, 0].title.set_text('IPF')
         axs[0, 0].set_xticks(no_axis, labels=np.round(
             x_axis, 2), rotation='vertical')
@@ -193,7 +193,7 @@ def plot_ori_map(grain_map, confidence_map, Xs, Zs, exp_maps,
               'The maximum confidence map value is : ' + str(np.max(conf_plot)))
         # Plot Misorientation or Filler Plot
         if misorientation_map is None:
-            ax4 = axs[1, 1].imshow(
+            axs[1, 1].imshow(
                 np.zeros(np.shape(conf_plot)), interpolation='none')
             axs[1, 1].title.set_text('Filler')
             axs[1, 1].set_xticks(no_axis, labels=np.round(
@@ -205,7 +205,7 @@ def plot_ori_map(grain_map, confidence_map, Xs, Zs, exp_maps,
         else:
             misorientation_plot = np.squeeze(
                 misorientation_map[layer_no, :, :])
-            ax4 = axs[1, 1].imshow(misorientation_plot,
+            axs[1, 1].imshow(misorientation_plot,
                                    interpolation='none', cmap='jet')
             axs[1, 1].title.set_text(
                 'Misorientation off Provided Grains.out Orientation')
