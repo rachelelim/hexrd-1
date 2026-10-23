@@ -48,8 +48,9 @@ import os
 import numpy as np
 
 from ff_grains_io import (
-    analysis_name, grain_nums_file_name, make_grain_lists, master_file_name,
-    read_detector_panels, write_grains_files, write_yaml,
+    analysis_name, correct_energy_gradient, energy_gradient_file_name,
+    grain_nums_file_name, load_energy_gradient, make_grain_lists,
+    master_file_name, read_detector_panels, write_grains_files, write_yaml,
 )
 
 
@@ -70,6 +71,10 @@ output_dir_base = './'
 data_dir = "/Users/lim37/Library/CloudStorage/OneDrive-LLNL/TriMet - General/CHESS_2026-09"
 # hexrd instrument file; its detector keys and their panels are used for the yaml image series
 detector_file = data_dir + '/dexela_ruby_composite.hexrd'
+
+# Correction of the strains for the energy gradient of the beam, fit by calc_lparm.py
+# (None for no correction)
+energy_gradient_file = output_dir_base + energy_gradient_file_name(analysis_stem)
 
 # Reassembly
 close_completness_cutoff = 0.1  # 10% is probably reasonable
@@ -107,6 +112,10 @@ master_grain_data = np.loadtxt(os.path.join(
     output_dir, master_file_name(analysis_stem, load_num - 1)))
 num_grains = master_grain_data.shape[0]
 
+energy_gradient = None
+if energy_gradient_file is not None:
+    energy_gradient = load_energy_gradient(energy_gradient_file)
+
 # The fit of each layer, in the frame of the sample, in the rows of the master list
 grain_holder = np.zeros([num_layers, num_grains, master_grain_data.shape[1]])
 
@@ -118,6 +127,10 @@ for i in np.arange(num_layers):
 
     print('Layer %d: %d grains fit, %d with completeness above 0.9'
           % (i, len(scan_grain_data), np.sum(scan_grain_data[:, 1] > 0.9)))
+
+    # the y of the grains is still in the frame of the layer here, as the gradient is
+    if energy_gradient is not None:
+        scan_grain_data = correct_energy_gradient(scan_grain_data, energy_gradient)
 
     scan_grain_data[:, 6:9] = scan_grain_data[:, 6:9] + pos_offset[:, i]
 

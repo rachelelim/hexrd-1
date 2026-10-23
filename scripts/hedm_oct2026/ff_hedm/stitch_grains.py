@@ -27,6 +27,7 @@ from hexrd import valunits
 import shutil
 
 from ff_grains_io import (
+    correct_energy_gradient, energy_gradient_file_name, load_energy_gradient,
     make_grain_lists, read_beam_energy, read_detector_panels,
     write_grains_files, write_yaml,
 )
@@ -100,9 +101,9 @@ rot_offset = None
 low_comp_thresh = 0.5
 high_chi2_thresh = 0.05
 
-# vertical dispersion correction
-vd_lin = 0.0  # vol_strain/mm
-vd_const = 0.0  # vol_strain
+# Correction of the strains for the energy gradient of the beam, fit by calc_lparm.py
+# (None for no correction)
+energy_gradient_file = output_dir_base + energy_gradient_file_name(analysis_stem)
 
 # vertical pos correction
 
@@ -251,6 +252,10 @@ num_grain_files = num_layers
 
 grain_data_list = [None] * num_grain_files
 
+energy_gradient = None
+if energy_gradient_file is not None:
+    energy_gradient = load_energy_gradient(energy_gradient_file)
+
 for i in np.arange(num_grain_files):
     # analysis_name = analysis_stem + "_S%d_L%d" % (load_num, i+1)
     grain_file = grain_file_stem % (load_num, i)
@@ -258,17 +263,9 @@ for i in np.arange(num_grain_files):
     # grain_data_list[i]=np.loadtxt(os.path.join(grain_file_locs[i] %(load_num),'grains.out'))
     grain_data_list[i] = np.loadtxt(grain_file)
 
-    pos_0 = grain_data_list[i][:, 6:9]
-    grain_data_list[i][:, 15] = grain_data_list[i][:, 15] - (
-        vd_lin * pos_0[:, 1] + vd_const
-    )
-    grain_data_list[i][:, 16] = grain_data_list[i][:, 16] - (
-        vd_lin * pos_0[:, 1] + vd_const
-    )
-    grain_data_list[i][:, 17] = grain_data_list[i][:, 17] - (
-        vd_lin * pos_0[:, 1] + vd_const
-    )
-    grain_data_list[i][:, 7] = grain_data_list[i][:, 7]  # - v_pos_corr
+    # the y of the grains is still in the frame of the layer here, as the gradient is
+    if energy_gradient is not None:
+        grain_data_list[i] = correct_energy_gradient(grain_data_list[i], energy_gradient)
 
     good_comp = np.where(grain_data_list[i][:, 1] >= low_comp_thresh)[0]
     good_chi2 = np.where(grain_data_list[i][:, 2] <= high_chi2_thresh)[0]

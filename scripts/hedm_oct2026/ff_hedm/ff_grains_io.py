@@ -9,12 +9,16 @@ names and the writers live here.
 For a state n the hexrd analysis of layer l is <stem>S<n>_L<l>/grains.out, the
 compiled grains are <stem>S<n:03d>_master.out, and the files that seed state
 n + 1 are S<n+1>_seed_L<l>_grains.out and grain_nums_S<n>_L<l>.txt.
+
+It also holds the correction of the strains for the energy gradient of the
+beam, which calc_lparm.py fits and the two scripts apply.
 """
 import os
 
 import h5py
 import numpy as np
 import yaml
+from scipy.interpolate import BSpline, make_lsq_spline
 
 GRAINS_HEADER = (
     "grain ID", "completeness", "chi2", "xi[0]", "xi[1]", "xi[2]",
@@ -50,6 +54,112 @@ def grain_nums_file_name(state_num, layer_num):
 
 def yaml_file_name(analysis_stem, state_num):
     return '%sS%d.yml' % (analysis_stem, state_num)
+
+
+def energy_gradient_file_name(analysis_stem):
+    return '%senergy_gradient.yml' % analysis_stem
+
+
+# Energy gradient of the beam
+#
+# The beam energy changes with the height in the beam, so grains are fit with
+# the wrong energy by an amount that depends on where in the beam they are.
+# That scales all the lattice spacings together, an error in the mean normal
+# strain, (ln V[0,0] + ln V[1,1] + ln V[2,2]) / 3, that depends only on y.  The
+# gradient is a curve of y fit to that mean strain of the good grains: a
+# polynomial of degree 1 for a monochromator with a linear gradient, or a cubic
+# spline for a multilayer, whose gradient is not linear and whose ends a
+# polynomial would not hold.  y is the grain's tVec_c[1] in the frame of its
+# layer, as in a grains.out from hexrd, so it has to be applied before the
+# layer offsets.  Outside the range of the grains that were fit the gradient is
+# held at its value at the end of the range.
+
+def _fit_curve(y, strain, model, degree, n_knots):
+    """Curve of strain against y, as the entries of the gradient dict"""
+    if model == 'polynomial':
+        # highest power first, as numpy.polyval wants them
+        return {'model': 'polynomial', 'degree': int(degree),
+                'coefficients': [float(c) for c in np.polyfit(y, strain, degree)]}
+    if model == 'spline':
+        # least-squares cubic spline with n_knots interior knots, spaced so that each
+        # interval has the same number of grains
+        order = np.argsort(y)
+        x, v = y[order], strain[order]
+        interior = np.quantile(x, np.linspace(0, 1, n_knots + 2)[1:-1])
+        knots = np.r_[[x[0]] * 4, interior, [x[-1]] * 4]
+        spline = make_lsq_spline(x, v, knots, k=3)
+        return {'model': 'spline', 'n_knots': int(n_knots), 'knots': [float(t) for t in spline.t],
+                'coefficients': [float(c) for c in spline.c]}
+    raise ValueError("model has to be 'spline' or 'polynomial', not %r" % (model,))
+
+
+def _eval_curve(curve, y):
+    if curve['model'] == 'polynomial':
+        return np.polyval(curve['coefficients'], y)
+    return BSpline(np.array(curve['knots']), np.array(curve['coefficients']), 3)(y)
+
+
+def fit_energy_gradient(y, mean_strain, model='spline', degree=1, n_knots=6, outlier_sigma=None):
+    """Curve of the mean normal strain against y
+
+    model is 'spline' (n_knots interior knots) or 'polynomial' (of the given
+    degree).  Grains that are more than outlier_sigma standard deviations from
+    the fit are dropped, and the fit is repeated, until none are.  Returns a
+    dict that save_energy_gradient writes.
+    """
+    y = np.asarray(y, float)
+    mean_strain = np.asarray(mean_strain, float)
+    use = np.ones(len(y), bool)
+    for _ in range(20):
+        curve = _fit_curve(y[use], mean_strain[use], model, degree, n_knots)
+        resid = mean_strain - _eval_curve(curve, np.clip(y, y[use].min(), y[use].max()))
+        rms = resid[use].std()
+        new_use = np.abs(resid) <= outlier_sigma * rms if outlier_sigma else use
+        if np.array_equal(new_use, use):
+            break
+        use = new_use
+    curve.update({
+        # the fit is only good where there are grains, so y is held to this range
+        'y_min': float(y[use].min()),
+        'y_max': float(y[use].max()),
+        'n_grains': int(use.sum()),
+        'rms_residual': float(rms),
+        'mean_strain': float(mean_strain[use].mean()),
+        'used': use,
+    })
+    return curve
+
+
+def save_energy_gradient(file_name, gradient):
+    # 'used' marks the grains of the fit, which only the diagnostic plot needs
+    saved = {k: v for k, v in gradient.items() if k != 'used'}
+    with open(file_name, 'w') as f:
+        yaml.dump(saved, f, default_flow_style=False)
+
+
+def load_energy_gradient(file_name):
+    if not os.path.exists(file_name):
+        raise FileNotFoundError(
+            'No energy gradient file %s, run calc_lparm.py first or set energy_gradient_file to None '
+            'for no correction' % file_name)
+    with open(file_name, 'r') as f:
+        return yaml.safe_load(f)
+
+
+def energy_gradient_strain(gradient, y):
+    """Mean normal strain error of the energy gradient at y, held to the fit range"""
+    return _eval_curve(gradient, np.clip(y, gradient['y_min'], gradient['y_max']))
+
+
+def correct_energy_gradient(grain_data, gradient):
+    """Copy of grain_data with the energy gradient taken out of the strains
+
+    The strain at the grain's y is removed from each of the three normal
+    components, ln V[0,0], ln V[1,1] and ln V[2,2] (columns 15 to 17).
+    """
+    corrected = np.array(grain_data, dtype=float)
+    corrected[:, 15:18] -= energy_gradient_strain(gradient, corrected[:, 7])[:, None]
+    return corrected
 
 
 # Instrument file

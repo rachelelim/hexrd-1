@@ -1,159 +1,187 @@
-# %%
-import numpy as np
-from matplotlib import pyplot as plt
-import copy
+"""Fit the energy gradient of the beam from the grains of the first state
+
+The beam energy changes with the height in the beam, which puts a strain error
+on every grain that depends on where in the beam it is.  The gradient is
+linear for some monochromators and not for others, such as the multilayers, so
+it is fit as a line (a polynomial of degree 1) for a linear one and as a spline
+for a multilayer.
+
+This fits the mean normal strain of the good grains against their y in the beam,
+with all of the layers together, and saves the curve for stitch_grains.py and
+recompile_grains.py to take out of the strains, with a diagnostic figure of the
+fit.  Run it once, on the first state, before stitch_grains.py.  It assumes that
+the sample has the same mean strain at every height, so that the trend with y is
+the gradient and not the sample.
+"""
+
+# %% Import Modules
 import os
 
+import numpy as np
+from matplotlib import pyplot as plt
 
-def expand_fit(p, Xs):
-    n_poly = len(p)
-    Ys = np.zeros(len(Xs))
-    for i, parm in enumerate(p):
-        factor = parm * Xs**(n_poly-i-1)
-        print(n_poly-i)
-        Ys = Ys + factor
-    return Ys
+from ff_grains_io import (
+    energy_gradient_file_name, energy_gradient_strain, fit_energy_gradient,
+    save_energy_gradient,
+)
 
 
-def write_grains_files(output_dir, analysis_stem, grain_data):
-    ngrains = len(grain_data)
+# %% User Input
+###############################################################################
 
-    f = open(
-        os.path.join(
-            output_dir,
-            analysis_stem+'_grains.out',
-        ),
-        "w",
-    )
+samp = 'diamond-1a'
+analysis_stem = "%s_" % samp
 
-    header_items = (
-        "grain ID",
-        "completeness",
-        "chi2",
-        "xi[0]",
-        "xi[1]",
-        "xi[2]",
-        "tVec_c[0]",
-        "tVec_c[1]",
-        "tVec_c[2]",
-        "vInv_s[0,0]",
-        "vInv_s[1,1]",
-        "vInv_s[2,2]",
-        "vInv_s[1,2]*sqrt(2)",
-        "vInv_s[0,2]*sqrt(2)",
-        "vInv_s[0,1]*sqrt(2)",
-        "ln(V[0,0])",
-        "ln(V[1,1])",
-        "ln(V[2,2])",
-        "ln(V[1,2])",
-        "ln(V[0,2])",
-        "ln(V[0,1])",
-    )
-    len_items = []
-    for i in header_items[1:]:
-        temp = len(i)
-        len_items.append(temp if temp > 19 else 19)  # for %19.12g
-    fmtstr = "#%13s  " + "  ".join(["%%%ds" % i for i in len_items]) + "\n"
-    f.write(fmtstr % header_items)
-    for i in np.arange(grain_data.shape[0]):
-        res_items = (
-            grain_data[i, 0],
-            grain_data[i, 1],
-            grain_data[i, 2],
-            grain_data[i, 3],
-            grain_data[i, 4],
-            grain_data[i, 5],
-            grain_data[i, 6],
-            grain_data[i, 7],
-            grain_data[i, 8],
-            grain_data[i, 9],
-            grain_data[i, 10],
-            grain_data[i, 11],
-            grain_data[i, 12],
-            grain_data[i, 13],
-            grain_data[i, 14],
-            grain_data[i, 15],
-            grain_data[i, 16],
-            grain_data[i, 17],
-            grain_data[i, 18],
-            grain_data[i, 19],
-            grain_data[i, 20],
-        )
-        fmtstr = "%14d  " + \
-            "  ".join(["%%%d.12g" % i for i in len_items]) + "\n"
-        f.write(fmtstr % res_items)
-
-    f.close()
-    return
-
-
-# %%
-# fname = 'diamond-1a/FF/diamond-1a_S000_master.out'
+data_dir = "/Users/lim37/Library/CloudStorage/OneDrive-LLNL/TriMet - General/CHESS_2026-09"
+# the grains.out of each layer of the first state, as read by stitch_grains.py
+grain_file_stem = data_dir + '/%s/FF/%s_S%%d_L%%d_grains.out' % (samp, samp)
 state_num = 0
-layer_num = 3
+num_layers = 4
 
-analysis_stem = f'diamond-1a_S{state_num}_L{layer_num}_fixed'
+# Grains used for the fit
+good_comp_min = 0.85
+good_chi2_max = 0.01
 
-output_dir = '/usr/workspace/trimet/CHESS_2026-09/diamond-1a/FF/'
+# 'polynomial' with poly_degree 1 for a monochromator with a linear gradient, 'spline'
+# for a multilayer.  n_knots is the number of interior knots of the spline: more follow
+# the gradient more closely, fewer are smoother.  The figure shows how the cross-validated
+# error of each changes, to choose it by.
+gradient_model = 'spline'
+n_knots = 4
+poly_degree = 1
+# grains this many standard deviations from the fit are left out of it
+outlier_sigma = 4
 
-fname = f'diamond-1a/FF/diamond-1a_S{state_num}_L{layer_num}/grains_crop.out'
-
+# Lattice parameter of the unstrained material (angstrom), to report the mean one
 L0 = 3.5916
 
-data = np.loadtxt(fname)
-
-good_grains = np.logical_and(data[:, 2] < 0.01, data[:, 1] > 0.85)
-gdata = data[good_grains, :]
-
-comp = gdata[:, 1]
-chi2 = gdata[:, 2]
-COMs = gdata[:, 6:9]
-strain = gdata[:, -6:]
-hstrain = np.mean(strain[:, :3], axis=1)
-
-p = np.polyfit(COMs[:, 1], hstrain, 5)
-
-plt.plot(COMs[:, 1], hstrain, '.')
-plt.plot(COMs[:, 1], strain[:, 0], '.')
-plt.plot(COMs[:, 1], strain[:, 1], '.')
-plt.plot(COMs[:, 1], strain[:, 2], '.')
-
-Xs = np.linspace(-0.2, 0.115, 100)
-# Ys = p[0]*Xs**5 + p[1]*Xs**4 + p[2]*Xs**3 + p[3]*Xs**2 + p[4]*Xs+p[5]
-Ys = expand_fit(p, Xs)
-plt.plot(Xs, Ys, 'o')
-# %%
-
-all_COMs = data[:, 6:9]
-all_strain = data[:, -6:]
-
-Xs = all_COMs[:, 1]
-Ys = expand_fit(p, Xs)
-plt.plot(Xs, Ys, '.')
-
-fixed = Ys
+output_dir = './'
 
 
-# plt.plot(Xs, hstrain-fixed, 'o')
-strain_fixed = copy.deepcopy(all_strain)
-strain_fixed[:, 0] = strain_fixed[:, 0]-fixed/3
-strain_fixed[:, 1] = strain_fixed[:, 1]-fixed/3
-strain_fixed[:, 2] = strain_fixed[:, 2]-fixed/3
+# %% Fit
+###############################################################################
 
-plt.ylim(-2e-3, 2e-3)
+y_all = []
+strain_all = []
+layer_all = []
+for i in range(num_layers):
+    data = np.loadtxt(grain_file_stem % (state_num, i))
+    good = np.logical_and(data[:, 2] < good_chi2_max, data[:, 1] > good_comp_min)
+    print('Layer %d: %d of %d grains are good' % (i, good.sum(), len(data)))
+    y_all.append(data[good, 7])
+    strain_all.append(np.mean(data[good, 15:18], axis=1))
+    layer_all.append(np.full(good.sum(), i))
+
+y_all = np.concatenate(y_all)
+strain_all = np.concatenate(strain_all)
+layer_all = np.concatenate(layer_all)
 
 
-avg_hstrain = np.mean(hstrain[np.abs(hstrain) < 1e-2])
+def fit(y, strain, model, size):
+    """size is the number of knots of a spline or the degree of a polynomial"""
+    return fit_energy_gradient(y, strain, model=model, degree=size, n_knots=size,
+                               outlier_sigma=outlier_sigma)
 
-fixed_gdata = copy.deepcopy(data)
-fixed_gdata[:, -6:] = strain_fixed
-# %%
-L = avg_hstrain*L0+L0
-print(avg_hstrain)
-print(L)
-# %%
 
-write_grains_files(output_dir, analysis_stem,
-                   fixed_gdata)
+gradient = fit(y_all, strain_all, gradient_model,
+               n_knots if gradient_model == 'spline' else poly_degree)
+used = gradient['used']
+print('%s fit to %d of %d grains, rms %.2e, y from %.3f to %.3f'
+      % (gradient_model, gradient['n_grains'], len(y_all),
+         gradient['rms_residual'], gradient['y_min'], gradient['y_max']))
+print('Mean normal strain %.4e, lattice parameter %.5f' %
+      (gradient['mean_strain'], L0 * (1 + gradient['mean_strain'])))
 
-# %%
+os.makedirs(output_dir, exist_ok=True)
+gradient_file = os.path.join(output_dir, energy_gradient_file_name(analysis_stem))
+save_energy_gradient(gradient_file, gradient)
+print('Saved %s' % gradient_file)
+
+
+# %% Cross-validation, to compare the models
+###############################################################################
+
+def cross_validated_rms(model, size, folds=5):
+    """rms of the grains that were left out of each fit, which are scored where
+    the fit holds, so grains beyond the ends are held to the ends"""
+    order = np.random.default_rng(0).permutation(len(y_all))
+    err = []
+    for k in range(folds):
+        test = np.zeros(len(y_all), bool)
+        test[order[k::folds]] = True
+        g = fit(y_all[~test], strain_all[~test], model, size)
+        err.append(strain_all[test] - energy_gradient_strain(g, y_all[test]))
+    return np.sqrt(np.mean(np.concatenate(err) ** 2))
+
+
+knot_counts = np.arange(0, 13)
+degrees = np.arange(1, 9)
+cv_spline = [cross_validated_rms('spline', n) for n in knot_counts]
+cv_poly = [cross_validated_rms('polynomial', d) for d in degrees]
+# the fewest knots that do about as well as the best
+enough = knot_counts[np.argmax(np.array(cv_spline) <= 1.01 * np.min(cv_spline))]
+print('Cross-validated rms of the spline is within 1%% of its best (%.2e) from %d interior knots'
+      % (np.min(cv_spline), enough))
+
+
+# %% Diagnostic figure
+###############################################################################
+
+ys = np.linspace(y_all.min(), y_all.max(), 400)
+fit_ys = energy_gradient_strain(gradient, ys)
+resid = strain_all - energy_gradient_strain(gradient, y_all)
+colors = ['C%d' % i for i in range(num_layers)]
+
+fig, ax = plt.subplots(2, 2, figsize=(12, 8.5))
+
+a = ax[0, 0]
+for i in range(num_layers):
+    m = np.logical_and(layer_all == i, used)
+    a.plot(y_all[m], strain_all[m], '.', color=colors[i], label='layer %d' % i)
+a.plot(y_all[~used], strain_all[~used], 'kx', label='left out of the fit')
+a.plot(ys, fit_ys, 'k-', lw=2, label='gradient (%s)' % gradient_model)
+a.axvspan(ys[0], gradient['y_min'], color='0.9')
+a.axvspan(gradient['y_max'], ys[-1], color='0.9')
+a.set_xlabel('y in the beam (mm)')
+a.set_ylabel('mean of ln V[0,0], ln V[1,1], ln V[2,2]')
+a.set_title('Strain before the correction (grey: held at the end value)')
+a.legend(fontsize=8)
+
+a = ax[0, 1]
+for i in range(num_layers):
+    m = np.logical_and(layer_all == i, used)
+    a.plot(y_all[m], resid[m], '.', color=colors[i])
+a.plot(y_all[~used], resid[~used], 'kx')
+a.axhline(0, color='k')
+a.axhline(gradient['rms_residual'], color='k', ls=':')
+a.axhline(-gradient['rms_residual'], color='k', ls=':')
+a.set_xlabel('y in the beam (mm)')
+a.set_title('After the correction (dotted: rms %.1e)' % gradient['rms_residual'])
+
+a = ax[1, 0]
+bins = np.linspace(y_all.min(), y_all.max(), 25)
+for i in range(num_layers):
+    m = layer_all == i
+    a.hist(y_all[m], bins=bins, histtype='step', color=colors[i],
+           label='layer %d, residual %.1e $\\pm$ %.1e' % (
+               i, resid[m & used].mean(), resid[m & used].std() / np.sqrt((m & used).sum())))
+a.set_xlabel('y in the beam (mm)')
+a.set_ylabel('grains')
+a.set_title('Where the grains are, and the mean residual of each layer')
+a.legend(fontsize=8)
+
+a = ax[1, 1]
+a.plot(knot_counts, cv_spline, 'o-', label='spline, interior knots')
+a.plot(degrees, cv_poly, 's-', label='polynomial, degree')
+a.set_yscale('log')
+a.set_xlabel('knots or degree')
+a.set_ylabel('cross-validated rms strain')
+a.set_title('Model choice')
+a.legend(fontsize=8)
+
+fig.suptitle('Energy gradient of %s, state %d' % (samp, state_num))
+fig.tight_layout()
+figure_file = os.path.join(output_dir, '%senergy_gradient.png' % analysis_stem)
+fig.savefig(figure_file, dpi=150)
+print('Saved %s' % figure_file)
+plt.show()
