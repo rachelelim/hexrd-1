@@ -48,8 +48,8 @@ import os
 import numpy as np
 
 from ff_grains_io import (
-    analysis_name, correct_energy_gradient, energy_gradient_file_name,
-    grain_nums_file_name, load_energy_gradient, make_grain_lists,
+    analysis_name, beam_calibration_file_name, correct_energy_gradient,
+    grain_nums_file_name, load_beam_calibration, make_grain_lists,
     master_file_name, read_detector_panels, write_grains_files, write_yaml,
 )
 
@@ -72,9 +72,9 @@ data_dir = "/Users/lim37/Library/CloudStorage/OneDrive-LLNL/TriMet - General/CHE
 # hexrd instrument file; its detector keys and their panels are used for the yaml image series
 detector_file = data_dir + '/dexela_ruby_composite.hexrd'
 
-# Correction of the strains for the energy gradient of the beam, fit by calc_lparm.py
-# (None for no correction)
-energy_gradient_file = output_dir_base + energy_gradient_file_name(analysis_stem)
+# Energy gradient of the beam, to correct the strains for, and the height of the center of the
+# beam, which calc_lparm.py finds (None for no correction and a beam center at 0)
+beam_calibration_file = output_dir_base + beam_calibration_file_name(analysis_stem)
 
 # Reassembly
 close_completness_cutoff = 0.1  # 10% is probably reasonable
@@ -112,9 +112,11 @@ master_grain_data = np.loadtxt(os.path.join(
     output_dir, master_file_name(analysis_stem, load_num - 1)))
 num_grains = master_grain_data.shape[0]
 
-energy_gradient = None
-if energy_gradient_file is not None:
-    energy_gradient = load_energy_gradient(energy_gradient_file)
+beam_calibration = None
+beam_center_y = 0.0
+if beam_calibration_file is not None:
+    beam_calibration = load_beam_calibration(beam_calibration_file)
+    beam_center_y = beam_calibration['beam_center_y']
 
 # The fit of each layer, in the frame of the sample, in the rows of the master list
 grain_holder = np.zeros([num_layers, num_grains, master_grain_data.shape[1]])
@@ -129,8 +131,8 @@ for i in np.arange(num_layers):
           % (i, len(scan_grain_data), np.sum(scan_grain_data[:, 1] > 0.9)))
 
     # the y of the grains is still in the frame of the layer here, as the gradient is
-    if energy_gradient is not None:
-        scan_grain_data = correct_energy_gradient(scan_grain_data, energy_gradient)
+    if beam_calibration is not None:
+        scan_grain_data = correct_energy_gradient(scan_grain_data, beam_calibration)
 
     scan_grain_data[:, 6:9] = scan_grain_data[:, 6:9] + pos_offset[:, i]
 
@@ -173,7 +175,7 @@ write_grains_files(output_dir, analysis_stem, grain_data, load_num, location=loc
 
 make_grain_lists(analysis_stem, grain_data, load_num, beam_height, pos_offset, output_dir,
                  location=location, low_comp_thresh=low_comp_thresh,
-                 high_chi2_thresh=high_chi2_thresh)
+                 high_chi2_thresh=high_chi2_thresh, beam_center_y=beam_center_y)
 
 if write_next_yaml:
     write_yaml(initial_yaml, image_fstem, samp, analysis_stem, load_num + 1,

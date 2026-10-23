@@ -10,8 +10,9 @@ For a state n the hexrd analysis of layer l is <stem>S<n>_L<l>/grains.out, the
 compiled grains are <stem>S<n:03d>_master.out, and the files that seed state
 n + 1 are S<n+1>_seed_L<l>_grains.out and grain_nums_S<n>_L<l>.txt.
 
-It also holds the correction of the strains for the energy gradient of the
-beam, which calc_lparm.py fits and the two scripts apply.
+It also holds the beam calibration that calc_lparm.py makes and the two scripts
+use: the correction of the strains for the energy gradient of the beam and the
+height of the center of the beam.
 """
 import os
 
@@ -56,8 +57,8 @@ def yaml_file_name(analysis_stem, state_num):
     return '%sS%d.yml' % (analysis_stem, state_num)
 
 
-def energy_gradient_file_name(analysis_stem):
-    return '%senergy_gradient.yml' % analysis_stem
+def beam_calibration_file_name(analysis_stem):
+    return '%sbeam_calibration.yml' % analysis_stem
 
 
 # Energy gradient of the beam
@@ -121,7 +122,7 @@ def fit_energy_gradient(y, mean_strain, model='spline', degree=1, n_knots=6, out
     model is 'spline' (n_knots interior knots) or 'polynomial' (of the given
     degree).  Grains that are more than outlier_sigma standard deviations from
     the fit are dropped, and the fit is repeated, until none are.  Returns a
-    dict that save_energy_gradient writes.
+    dict that save_beam_calibration writes.
     """
     y = np.asarray(y, float)
     mean_strain = np.asarray(mean_strain, float)
@@ -146,17 +147,20 @@ def fit_energy_gradient(y, mean_strain, model='spline', degree=1, n_knots=6, out
     return curve
 
 
-def save_energy_gradient(file_name, gradient):
+def save_beam_calibration(file_name, calibration):
+    """Write the energy gradient from fit_energy_gradient, with the 'beam_center_y' added to it"""
     # 'used' marks the grains of the fit, which only the diagnostic plot needs
-    saved = {k: v for k, v in gradient.items() if k != 'used'}
+    saved = {k: v for k, v in calibration.items() if k != 'used'}
     with open(file_name, 'w') as f:
         yaml.dump(saved, f, default_flow_style=False)
 
 
-def load_energy_gradient(file_name):
+def load_beam_calibration(file_name):
+    """The energy gradient and the 'beam_center_y', the height of the center of the beam in
+    the frame of a layer, from the file calc_lparm.py wrote"""
     if not os.path.exists(file_name):
         raise FileNotFoundError(
-            'No energy gradient file %s, run calc_lparm.py first or set energy_gradient_file to None '
+            'No beam calibration file %s, run calc_lparm.py first or set beam_calibration_file to None '
             'for no correction' % file_name)
     with open(file_name, 'r') as f:
         return yaml.safe_load(f)
@@ -226,31 +230,34 @@ def write_grains_files(output_dir, analysis_stem, grain_data, state_num, layer_n
             f.write(row_fmt % tuple(row))
 
 
-def layer_bounds(vert_off, beam_height, location='both', v_pos_corr=0.0):
+def layer_bounds(vert_off, beam_height, location='both', v_pos_corr=0.0, beam_center_y=0.0):
     """Y range, (lower, upper), of the grains that can be in each layer
 
     The range reaches 1.5 beam heights to the side(s) of the layer that
     'location' asks for (below for 'bottom', above for 'top', both for 'both').
-    The first layer has no upper limit.
+    The first layer has no upper limit.  The windows are around the center of the
+    beam, beam_center_y above the middle of the layer in the frame of the layer.
     """
     below, above = {'bottom': (1.5, 0.5), 'top': (0.5, 1.5), 'both': (1.5, 1.5)}[location]
     bounds = []
     for i, off in enumerate(vert_off):
-        lower = off - below*beam_height - v_pos_corr
-        upper = np.inf if i == 0 else off + above*beam_height - v_pos_corr
+        center = off + beam_center_y
+        lower = center - below*beam_height - v_pos_corr
+        upper = np.inf if i == 0 else center + above*beam_height - v_pos_corr
         bounds.append((lower, upper))
     return bounds
 
 
 def make_grain_lists(analysis_stem, grain_data, state_num, beam_height, pos_offset, output_dir,
-                     location='both', v_pos_corr=0.0, low_comp_thresh=None, high_chi2_thresh=None):
+                     location='both', v_pos_corr=0.0, low_comp_thresh=None, high_chi2_thresh=None,
+                     beam_center_y=0.0):
     """Make the seed grains.out file and grain number list of each layer for state_num + 1
 
     grain_data are the compiled grains of state_num, with positions in the
     sample frame.  A grain is in a layer if it is within the y bounds of
     layer_bounds, and, when the thresholds are given, has completeness of at
     least low_comp_thresh and chi2 below high_chi2_thresh.  The seed grains are
-    moved into the frame of their layer.
+    moved into the frame of their layer, which keeps the beam center at beam_center_y.
     """
     vert_off = pos_offset[1]
     y_loc = grain_data[:, 7]
@@ -261,7 +268,7 @@ def make_grain_lists(analysis_stem, grain_data, state_num, beam_height, pos_offs
         keep &= grain_data[:, 2] < high_chi2_thresh
     print('There are %d grains in the compiled list' % len(grain_data))
 
-    bounds = layer_bounds(vert_off, beam_height, location, v_pos_corr)
+    bounds = layer_bounds(vert_off, beam_height, location, v_pos_corr, beam_center_y)
     for i, (lower, upper) in enumerate(bounds):
         used = np.where(keep & (y_loc >= lower) & (y_loc <= upper))[0]
         layer_grain_data = grain_data[used, :]

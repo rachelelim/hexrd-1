@@ -27,7 +27,7 @@ from hexrd import valunits
 import shutil
 
 from ff_grains_io import (
-    correct_energy_gradient, energy_gradient_file_name, load_energy_gradient,
+    beam_calibration_file_name, correct_energy_gradient, load_beam_calibration,
     make_grain_lists, read_beam_energy, read_detector_panels,
     write_grains_files, write_yaml,
 )
@@ -101,9 +101,9 @@ rot_offset = None
 low_comp_thresh = 0.5
 high_chi2_thresh = 0.05
 
-# Correction of the strains for the energy gradient of the beam, fit by calc_lparm.py
-# (None for no correction)
-energy_gradient_file = output_dir_base + energy_gradient_file_name(analysis_stem)
+# Energy gradient of the beam, to correct the strains for, and the height of the center of the
+# beam, which calc_lparm.py finds (None for no correction and a beam center at 0)
+beam_calibration_file = output_dir_base + beam_calibration_file_name(analysis_stem)
 
 # vertical pos correction
 
@@ -252,9 +252,11 @@ num_grain_files = num_layers
 
 grain_data_list = [None] * num_grain_files
 
-energy_gradient = None
-if energy_gradient_file is not None:
-    energy_gradient = load_energy_gradient(energy_gradient_file)
+beam_calibration = None
+beam_center_y = 0.0
+if beam_calibration_file is not None:
+    beam_calibration = load_beam_calibration(beam_calibration_file)
+    beam_center_y = beam_calibration['beam_center_y']
 
 for i in np.arange(num_grain_files):
     # analysis_name = analysis_stem + "_S%d_L%d" % (load_num, i+1)
@@ -264,8 +266,8 @@ for i in np.arange(num_grain_files):
     grain_data_list[i] = np.loadtxt(grain_file)
 
     # the y of the grains is still in the frame of the layer here, as the gradient is
-    if energy_gradient is not None:
-        grain_data_list[i] = correct_energy_gradient(grain_data_list[i], energy_gradient)
+    if beam_calibration is not None:
+        grain_data_list[i] = correct_energy_gradient(grain_data_list[i], beam_calibration)
 
     good_comp = np.where(grain_data_list[i][:, 1] >= low_comp_thresh)[0]
     good_chi2 = np.where(grain_data_list[i][:, 2] <= high_chi2_thresh)[0]
@@ -299,7 +301,7 @@ write_grains_files(output_dir, analysis_stem,
 if make_layer_grain_lists:
     make_grain_lists(analysis_stem, culled_grain_data, load_num,
                      beam_height, pos_offset, output_dir, location=location,
-                     v_pos_corr=v_pos_corr)
+                     v_pos_corr=v_pos_corr, beam_center_y=beam_center_y)
 
 if write_next_yaml:
     write_yaml(initial_yaml, image_fstem, samp, analysis_stem, load_num + 1,

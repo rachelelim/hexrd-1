@@ -9,7 +9,9 @@ for a multilayer.
 This fits the mean normal strain of the good grains against their y in the beam,
 with all of the layers together, and saves the curve for stitch_grains.py and
 recompile_grains.py to take out of the strains, with a diagnostic figure of the
-fit.  Run it once, on the first state, before stitch_grains.py.  It assumes that
+fit.  It also finds the height of the center of the beam in the frame of a layer,
+the middle of the heights where there are enough grains, which they use to place
+the windows of the seed grains of each layer.  Run it once, on the first state, before stitch_grains.py.  It assumes that
 the sample has the same mean strain at every height, so that the trend with y is
 the gradient and not the sample.
 """
@@ -21,8 +23,8 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 from ff_grains_io import (
-    energy_gradient_file_name, energy_gradient_strain, fit_energy_gradient,
-    save_energy_gradient, well_populated_range,
+    beam_calibration_file_name, energy_gradient_strain, fit_energy_gradient,
+    save_beam_calibration, well_populated_range,
 )
 
 
@@ -111,10 +113,15 @@ print('%s fit to %d of %d grains, rms %.2e, y from %.3f to %.3f'
 print('Mean normal strain %.4e, lattice parameter %.5f' %
       (gradient['mean_strain'], L0 * (1 + gradient['mean_strain'])))
 
+# The beam is as high as the range of heights with enough grains, and its center is the middle of it
+beam_center_y = 0.5 * (y_lo + y_hi)
+gradient['beam_center_y'] = float(beam_center_y)
+print('Beam center at y = %.3f mm, %.3f mm high' % (beam_center_y, y_hi - y_lo))
+
 os.makedirs(output_dir, exist_ok=True)
-gradient_file = os.path.join(output_dir, energy_gradient_file_name(analysis_stem))
-save_energy_gradient(gradient_file, gradient)
-print('Saved %s' % gradient_file)
+calibration_file = os.path.join(output_dir, beam_calibration_file_name(analysis_stem))
+save_beam_calibration(calibration_file, gradient)
+print('Saved %s' % calibration_file)
 
 
 # %% Cross-validation, to compare the models
@@ -161,6 +168,7 @@ a.plot(y_all[~used], strain_all[~used], 'kx', label='left out of the fit (too fe
 a.plot(ys, fit_ys, 'k-', lw=2, label='gradient (%s)' % gradient_model)
 a.axvspan(ys[0], gradient['y_min'], color='0.9')
 a.axvspan(gradient['y_max'], ys[-1], color='0.9')
+a.axvline(beam_center_y, color='C4', ls='--', label='beam center')
 a.set_xlabel('y in the beam (mm)')
 a.set_ylabel('mean of ln V[0,0], ln V[1,1], ln V[2,2]')
 a.set_title('Strain before the correction (grey: held at the end value)')
@@ -172,6 +180,7 @@ for i in range(num_layers):
     a.plot(y_all[m], resid[m], '.', color=colors[i])
 a.plot(y_all[~used], resid[~used], 'kx')
 a.axhline(0, color='k')
+a.axvline(beam_center_y, color='C4', ls='--')
 a.axhline(gradient['rms_residual'], color='k', ls=':')
 a.axhline(-gradient['rms_residual'], color='k', ls=':')
 a.set_xlabel('y in the beam (mm)')
@@ -219,6 +228,8 @@ edges = np.arange(yg.min(), yg.max() + density_bin_width, density_bin_width)
 centers = 0.5 * (edges[1:] + edges[:-1])
 
 fig, ax = plt.subplots(3, 1, figsize=(8, 10), sharex=True)
+for a in ax:
+    a.axvline(beam_center_y, color='C4', ls='--')
 
 a = ax[0]
 for i in range(num_layers):
@@ -227,7 +238,7 @@ for i in range(num_layers):
 counts, _ = np.histogram(yg, edges)
 a.step(centers, counts / density_bin_width, where='mid', color='k', lw=2, label='all layers')
 a.set_ylabel('grains per mm')
-a.set_title('Every grain found')
+a.set_title('Every grain found (dashed: beam center %.3f mm)' % beam_center_y)
 a.legend(fontsize=8)
 
 a = ax[1]
