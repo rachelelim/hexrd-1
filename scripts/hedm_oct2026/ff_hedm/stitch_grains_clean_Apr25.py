@@ -99,9 +99,41 @@ v_pos_corr = 0.0
 # %%
 
 
+def quat_multiply(q1, q2):
+    """Hamilton product of one quaternion q1 (4,) with quaternions q2 (4, N)
+
+    Quaternions are scalar first, as in hexrd.rotations.
+    """
+    w1, x1, y1, z1 = q1
+    w2, x2, y2, z2 = q2
+    return np.vstack([
+        w1*w2 - x1*x2 - y1*y2 - z1*z2,
+        w1*x2 + x1*w2 + y1*z2 - z1*y2,
+        w1*y2 - x1*z2 + y1*w2 + z1*x2,
+        w1*z2 + x1*y2 - y1*x2 + z1*w2,
+    ])
+
+
+def closest_symmetric_variant(q1, q2, qsyms):
+    """Symmetry-equivalent of q2 that is closest to q1
+
+    q2 can be written q2*s for any crystal symmetry operator s, so two grains
+    with the same physical orientation can have very different quaternions
+    (and exponential maps).  Returns that variant (sign chosen so that it is in
+    the same hemisphere as q1) and the misorientation angle in degrees.
+    """
+    variants = quat_multiply(q2, qsyms)
+    dots = q1 @ variants
+    best = np.argmax(np.abs(dots))
+    q2_best = variants[:, best] * np.sign(dots[best])
+    angle = 2.0 * np.arccos(np.clip(np.abs(dots[best]), 0.0, 1.0))
+    return q2_best, np.degrees(angle)
+
+
 def remove_duplicate_grains(
     grain_data, qsyms, dist_thresh=0.01, misorient_thresh=0.1, comp_diff=0.1
 ):
+    # grains.out columns: 3:6 exponential map, 6:9 centroid (tVec_c)
     total_grains = grain_data.shape[0]
 
     all_comp = grain_data[:, 1]
@@ -110,34 +142,35 @@ def remove_duplicate_grains(
 
     print("Removing duplicate grains")
     for i in np.arange(total_grains - 1):
-        cur_pos = grain_data[i, 3:6]
-        other_pos = grain_data[(i + 1):, 3:6]
+        cur_pos = grain_data[i, 6:9]
+        other_pos = grain_data[(i + 1):, 6:9]
         xdist = cur_pos[0] - other_pos[:, 0]
         ydist = cur_pos[1] - other_pos[:, 1]
         zdist = cur_pos[2] - other_pos[:, 2]
 
         dist = np.sqrt(xdist ** 2.0 + ydist ** 2.0 + zdist ** 2.0)
 
+        nearest = np.argmin(dist) + i + 1
+
         if np.min(dist) < dist_thresh:
 
-            q1 = sym.toFundamentalRegion(
-                np.atleast_2d(grain_quats[:, i]).T, crysSym=qsyms
+            q2_aligned, misorientation = closest_symmetric_variant(
+                grain_quats[:, i], grain_quats[:, nearest], qsyms
             )
-            q2 = sym.toFundamentalRegion(
-                np.atleast_2d(grain_quats[:, np.argmin(
-                    dist) + i + 1]).T, crysSym=qsyms
-            )
-            misorientation = rot.misorientation(q1, q2)[0] * 180.0 / np.pi
 
             if misorientation < misorient_thresh:
-                dup_list = np.append(dup_list, np.argmin(dist) + i + 1)
-                if np.abs(all_comp[i] - all_comp[np.argmin(dist) + i + 1]) <= comp_diff:
-                    grain_data[i, :] = (
-                        grain_data[i, :] +
-                        grain_data[np.argmin(dist) + i + 1, :]
-                    ) / 2.0
-                elif (all_comp[np.argmin(dist) + i + 1] - all_comp[i]) > 0:
-                    grain_data[i, :] = grain_data[np.argmin(dist) + i + 1, :]
+                dup_list = np.append(dup_list, nearest)
+                if np.abs(all_comp[i] - all_comp[nearest]) <= comp_diff:
+                    merged = (grain_data[i, :] + grain_data[nearest, :]) / 2.0
+                    # exponential maps of symmetry-equivalent orientations can
+                    # differ wildly, so average the aligned quaternions instead
+                    q_avg = grain_quats[:, i] + q2_aligned
+                    q_avg = q_avg / np.linalg.norm(q_avg)
+                    merged[3:6] = rot.expMapOfQuat(
+                        np.atleast_2d(q_avg).T).flatten()
+                    grain_data[i, :] = merged
+                elif (all_comp[nearest] - all_comp[i]) > 0:
+                    grain_data[i, :] = grain_data[nearest, :]
 
     grain_data = np.delete(grain_data, dup_list.astype(int), axis=0)
 
