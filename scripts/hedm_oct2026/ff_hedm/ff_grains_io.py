@@ -99,6 +99,22 @@ def _eval_curve(curve, y):
     return BSpline(np.array(curve['knots']), np.array(curve['coefficients']), 3)(y)
 
 
+def well_populated_range(y, bin_width, min_grains):
+    """(lower, upper) of y, around the busiest bin, within which every bin has min_grains
+
+    Beyond this there are too few grains for the gradient to be fit to, and the ends
+    of a fit that reached out to them would rest on a few grains.
+    """
+    edges = np.arange(y.min(), y.max() + bin_width, bin_width)
+    counts, edges = np.histogram(y, edges)
+    lo = hi = int(np.argmax(counts))
+    while lo > 0 and counts[lo - 1] >= min_grains:
+        lo -= 1
+    while hi < len(counts) - 1 and counts[hi + 1] >= min_grains:
+        hi += 1
+    return edges[lo], edges[hi + 1]
+
+
 def fit_energy_gradient(y, mean_strain, model='spline', degree=1, n_knots=6, outlier_sigma=None):
     """Curve of the mean normal strain against y
 
