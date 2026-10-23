@@ -58,7 +58,7 @@ requirements:
     - python
     - python-xxhash
     - pyyaml
-    - scikit-image
+    - scikit-image >=0.26
     - scikit-learn
     - scipy
     # TBB seems to be a little faster than OpenMP for the cases I've tried.

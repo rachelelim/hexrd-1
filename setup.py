@@ -25,7 +25,7 @@ install_reqs = [
     'psutil',
     'pycifrw',
     'pyyaml',
-    'scikit-image',
+    'scikit-image>=0.26',
     'scikit-learn',
     'scipy',
     'tqdm',

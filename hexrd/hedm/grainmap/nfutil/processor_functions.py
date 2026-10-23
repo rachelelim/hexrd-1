@@ -1395,7 +1395,8 @@ def _filter_and_binarize_image(cleaned_image_stack, filter_parameters, start, st
     if remove_small_features == 1:
         for i in np.arange(n_images):
             binarized_image_stack[i, :, :] = skimage.morphology.remove_small_objects(
-                binarized_image_stack[i, :, :], filter_parameters[1], connectivity=1)
+                binarized_image_stack[i, :, :],
+                max_size=filter_parameters[1] - 1, connectivity=1)
 
     # Return the things
     return binarized_image_stack, start, stop

@@ -1115,7 +1115,7 @@ def make_beamstop_mask(raw_image_stack, num_img_for_median, binarization_thresho
         working_img, iterations=dilations)
     # Remove any small features
     working_img = skimage.morphology.remove_small_objects(
-        working_img, feature_size_to_remove, connectivity=1)
+        working_img, max_size=feature_size_to_remove - 1, connectivity=1)
     # Invert the image
     working_img = working_img == 0
     # Return
