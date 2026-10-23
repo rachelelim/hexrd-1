@@ -25,8 +25,11 @@ from hexrd import material
 from hexrd import valunits
 
 import shutil
-import h5py
-import yaml
+
+from ff_grains_io import (
+    make_grain_lists, read_beam_energy, read_detector_panels,
+    write_grains_files, write_yaml,
+)
 
 
 # %% User Input
@@ -219,12 +222,6 @@ def assemble_grain_data(grain_data_list, pos_offset=None, rotation_offset=None):
     return grain_data, old_grain_numbers
 
 
-def read_beam_energy(instrument_file):
-    """Beam energy in keV from a hexrd instrument file"""
-    with h5py.File(instrument_file, 'r') as f:
-        return float(np.squeeze(f['instrument/beam/energy'][()]))
-
-
 def load_pdata(filename, energy, mat):
     """Plane data of a material, at the beam energy and with the dmin saved in the materials file
 
@@ -235,236 +232,6 @@ def load_pdata(filename, energy, mat):
     print('Material %s: beam energy %g keV, dmin %s' % (mat, energy, mats[mat].dmin))
     pd = mats[mat].planeData
     return pd
-
-
-# makes the lists of grains to check in each layer for timeseries data
-def make_grain_lists(analysis_stem, grain_data, state_num, beam_height, pos_offset, output_dir, location='both'):
-    vert_off = pos_offset[1]
-    gid_offset = np.zeros([len(vert_off)]).astype(int)
-
-    y_loc = grain_data[:, 7]
-    print('There are %d grains in the compiled list' % len(grain_data))
-    grain_nums = []
-    grain_num_fname = 'grain_nums_S%d_L%d.txt'
-
-    ngrains = []
-
-    for i in range(len(vert_off)):
-
-        if location == 'bottom':
-            if i == len(vert_off):
-                used_grains = np.where(
-                    y_loc <= pos_offset[1][i] + beam_height/2 - v_pos_corr)
-            elif i == 0:
-                used_grains = np.where(
-                    y_loc >= pos_offset[1][i] - beam_height*1.5 - v_pos_corr)
-            else:
-                used_grains = np.where(np.logical_and(
-                    y_loc >= pos_offset[1][i]-beam_height*1.5 - v_pos_corr, y_loc <= pos_offset[1][i] + beam_height/2 - v_pos_corr))
-
-        elif location == 'top':
-            if i == 0:
-                used_grains = np.where(
-                    y_loc >= pos_offset[1][i] - beam_height/2 - v_pos_corr)
-            elif i == len(vert_off):
-                used_grains = np.where(
-                    y_loc <= pos_offset[1][i] + beam_height*1.5 - v_pos_corr)
-
-            else:
-                used_grains = np.where(np.logical_and(
-                    y_loc >= pos_offset[1][i] - beam_height/2, y_loc <= pos_offset[1][i] + beam_height*1.5) - v_pos_corr)
-        elif location == 'both':
-            if i == len(vert_off):
-                used_grains = np.where(
-                    y_loc <= pos_offset[1][i] + beam_height*1.5 - v_pos_corr)
-            elif i == 0:
-                used_grains = np.where(
-                    y_loc >= pos_offset[1][i] - beam_height*1.5 - v_pos_corr)
-            else:
-                used_grains = np.where(np.logical_and(
-                    y_loc >= pos_offset[1][i]-beam_height*1.5 - v_pos_corr, y_loc <= pos_offset[1][i] + beam_height*1.5 - v_pos_corr))
-                print(pos_offset[1][i]-beam_height*1.5 - v_pos_corr)
-                print(pos_offset[1][i] + beam_height*1.5 - v_pos_corr)
-
-        layer_grain_data = grain_data[used_grains[0], :]
-        layer_grain_data[:, 7] = layer_grain_data[:, 7] - vert_off[i]
-        # print(layer_grain_data)
-        # grain_nums.append(used_grains[0])
-
-        np.savetxt(output_dir+grain_num_fname %
-                   (state_num, i), used_grains[0].astype(int))
-
-        write_grains_files(output_dir, analysis_stem, layer_grain_data,
-                           state_num, layer_num=i, location=location)
-
-    return
-
-
-def write_grains_files(output_dir, analysis_stem, grain_data, state_num, layer_num=None, location='both'):
-    ngrains = len(grain_data)
-    if layer_num != None:
-        print('\t %d grains in layer %d' % (ngrains, layer_num))
-        gids = np.arange(ngrains)
-        grain_data[:, 0] = gids
-
-    if location == 'top':
-        fstem = "S%d_seed_top_L%d_grains.out"
-
-    if location == 'bottom':
-        fstem = "S%d_seed_bottom_L%d_grains.out"
-
-    if location == 'both':
-        fstem = "S%d_seed_L%d_grains.out"
-
-    if layer_num == None:
-        f = open(os.path.join(output_dir, analysis_stem + "S%03d_master.out" %
-                 state_num), "w")
-    else:
-        f = open(
-            os.path.join(
-                output_dir,
-                fstem % (state_num + 1, layer_num),
-            ),
-            "w",
-        )
-
-    header_items = (
-        "grain ID",
-        "completeness",
-        "chi2",
-        "xi[0]",
-        "xi[1]",
-        "xi[2]",
-        "tVec_c[0]",
-        "tVec_c[1]",
-        "tVec_c[2]",
-        "vInv_s[0,0]",
-        "vInv_s[1,1]",
-        "vInv_s[2,2]",
-        "vInv_s[1,2]*sqrt(2)",
-        "vInv_s[0,2]*sqrt(2)",
-        "vInv_s[0,1]*sqrt(2)",
-        "ln(V[0,0])",
-        "ln(V[1,1])",
-        "ln(V[2,2])",
-        "ln(V[1,2])",
-        "ln(V[0,2])",
-        "ln(V[0,1])",
-    )
-    len_items = []
-    for i in header_items[1:]:
-        temp = len(i)
-        len_items.append(temp if temp > 19 else 19)  # for %19.12g
-    fmtstr = "#%13s  " + "  ".join(["%%%ds" % i for i in len_items]) + "\n"
-    f.write(fmtstr % header_items)
-    for i in np.arange(grain_data.shape[0]):
-        res_items = (
-            grain_data[i, 0],
-            grain_data[i, 1],
-            grain_data[i, 2],
-            grain_data[i, 3],
-            grain_data[i, 4],
-            grain_data[i, 5],
-            grain_data[i, 6],
-            grain_data[i, 7],
-            grain_data[i, 8],
-            grain_data[i, 9],
-            grain_data[i, 10],
-            grain_data[i, 11],
-            grain_data[i, 12],
-            grain_data[i, 13],
-            grain_data[i, 14],
-            grain_data[i, 15],
-            grain_data[i, 16],
-            grain_data[i, 17],
-            grain_data[i, 18],
-            grain_data[i, 19],
-            grain_data[i, 20],
-        )
-        fmtstr = "%14d  " + \
-            "  ".join(["%%%d.12g" % i for i in len_items]) + "\n"
-        f.write(fmtstr % res_items)
-
-    f.close()
-    return
-
-
-def read_detector_panels(instrument_file):
-    """Panels of each detector in a hexrd instrument file, {detector key: [panel names]}
-
-    The detector key is the panel's 'group' (ff1 for ff1_0_0, ff1_0_1, ...),
-    or the panel name itself for panels that are not grouped.
-    """
-    det_panels = {}
-    with h5py.File(instrument_file, 'r') as f:
-        for panel in f['instrument/detectors']:
-            grp = f['instrument/detectors'][panel]
-            key = grp['group'][()].decode() if 'group' in grp else panel
-            det_panels.setdefault(key, []).append(panel)
-    return det_panels
-
-
-def write_yaml(init_yaml, image_fstem, sample, analysis_stem, state_num, num_layers, first_scan_num, first_file_num, output_dir, det_panels, location='both'):
-    yaml_dict = []
-    initial_yaml_info = yaml.load(open(initial_yaml, "r"), Loader=yaml.Loader)
-    yaml_dict.append(initial_yaml_info)
-
-    if location == 'top':
-        fstem = "S%d_seed_top_L%d_grains.out"
-    if location == 'bottom':
-        fstem = "S%d_seed_bottom_L%d_grains.out"
-    if location == 'both':
-        fstem = "S%d_seed_L%d_grains.out"
-
-    for layer_num in range(0, num_layers):
-        # this part is a bit derpy but being weird here means the file it creates is cleaner looking
-        image_list = []
-
-        # for det_num, det in enumerate(det_names):
-        # files = glob.glob(image_fstem % (state_num, layer_num - 1 + first_scan_num, det))
-
-        # for image_file in files:
-
-        # image_file = image_fstem % (state_num, layer_num+111, det)
-        for det, panels in det_panels.items():
-            this_dict = {'file': image_fstem % (sample, first_scan_num + layer_num, det, first_file_num + layer_num),
-                         'args': {},
-                         'panel': panels}
-        # 'file': image_file,
-        # 'args': {},
-        # 'panel': det}
-
-            image_list.append(this_dict)
-
-        if layer_num == 0:
-            initial_yaml_info["analysis_name"] = analysis_stem + \
-                "S%d_L%d" % (state_num, layer_num)
-            # updating['image_series'] = {}
-            initial_yaml_info['image_series']["data"] = image_list
-            # updating["fit_grains"] = {}
-            initial_yaml_info["fit_grains"]["estimate"] = fstem % (
-                state_num, layer_num)
-
-        else:
-
-            updating = {}
-            updating["analysis_name"] = analysis_stem + \
-                "S%d_L%d" % (state_num, layer_num)
-            updating['image_series'] = {}
-            updating['image_series']["data"] = image_list
-            updating["fit_grains"] = {}
-            updating["fit_grains"]["estimate"] = fstem % (state_num, layer_num)
-
-            yaml_dict.append(updating)
-
-    yaml.dump_all(
-        yaml_dict,
-        open(output_dir + '/' + analysis_stem +
-             "S%d.yml" % state_num, "w"),
-        default_flow_style=False,
-    )
-
-    return  # yaml_dict
 
 
 # % Load data
@@ -534,7 +301,8 @@ write_grains_files(output_dir, analysis_stem,
 
 if make_layer_grain_lists:
     make_grain_lists(analysis_stem, culled_grain_data, load_num,
-                     beam_height, pos_offset, output_dir, location=location)
+                     beam_height, pos_offset, output_dir, location=location,
+                     v_pos_corr=v_pos_corr)
 
 if write_next_yaml:
     write_yaml(initial_yaml, image_fstem, samp, analysis_stem, load_num + 1,
