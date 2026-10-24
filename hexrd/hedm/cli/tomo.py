@@ -18,7 +18,7 @@ import logging
 import os
 import sys
 
-_description = 'Tomography masks: reconstruct, pipeline, missing-frames, spec, offset, interpolate, smooth'
+_description = 'Tomography masks: reconstruct, pipeline, missing-frames, spec, offset, interpolate, smooth, merge'
 _help = 'tomography mask tools (use `hexrd tomo -h` for the steps)'
 
 
@@ -32,6 +32,7 @@ def configure_parser(sub_parsers):
     _configure_offset(steps)
     _configure_interpolate(steps)
     _configure_smooth(steps)
+    _configure_merge(steps)
 
 
 def _quiet_flag(p):
@@ -367,5 +368,55 @@ def execute_smooth(args, parser):
     cleanup = _setup_logging(args)
     try:
         smooth_mask_file(args.mask, args.out, args.sigma, per_layer=args.per_layer)
+    finally:
+        cleanup()
+
+
+def _configure_merge(steps):
+    p = steps.add_parser(
+        'merge', description='Merge the tomography masks of one sample, scanned at several heights, into one tall mask',
+        help='merge masks of several heights into one')
+    p.set_defaults(func=execute_merge)
+    p.add_argument('masks', nargs='+', help='*_tomo_mask.npz, one for each height')
+    p.add_argument('-o', '--out', required=True, help='output npz')
+    how = p.add_argument_group(
+        'vertical position of the masks',
+        'How far each mask is above or below the others, in the order of the masks. By default the ramsz that '
+        'each mask records is used, which is not always right for older masks, so it can be given. '
+        'In order of preference: --offsets, --ramsz, the ramsz in the masks, --spec-log with --tomo-scans.')
+    how.add_argument('--offsets', type=float, nargs='+', default=None, metavar='MM',
+                     help='how far to shift the heights of each mask (ramsz of the reference scan - ramsz of the scan)')
+    how.add_argument('--ramsz', type=float, nargs='+', default=None, metavar='MM',
+                     help='the vertical stage position of the tomography scan of each mask')
+    how.add_argument('--spec-log', default=None, help='spec.log, to read the ramsz of the scans in --tomo-scans from')
+    how.add_argument('--tomo-scans', type=int, nargs='+', default=None, metavar='SCAN',
+                     help='spec scan number of the tomography scan of each mask')
+    how.add_argument('--reference', type=int, default=None, metavar='N',
+                     help='which mask (0 for the first) the others are registered to and the merged heights are in the '
+                          'frame of; default the one in the middle')
+    reg = p.add_argument_group('registration', 'each mask is moved in the plane of the layers to line up with its neighbor')
+    reg.add_argument('--no-register', action='store_true', help='do not register the masks')
+    reg.add_argument('--register-slices', type=int, default=5, help='slices of the overlap to register with (default 5)')
+    reg.add_argument('--max-shift', type=float, default=10.0,
+                     help='stop if a mask has to move more than this many voxels (default 10)')
+    p.add_argument('--figure', default=None, metavar='PNG',
+                   help='vertical cross sections of the merged mask before and after the registration '
+                        '(default: the output name with _merge.png instead of .npz)')
+    p.add_argument('--no-figure', action='store_true', help='do not draw the cross sections')
+    _quiet_flag(p)
+
+
+def execute_merge(args, parser):
+    from hexrd.hedm.grainmap.tomo_merge import merge_mask_files
+
+    cleanup = _setup_logging(args)
+    figure = None if args.no_figure else (args.figure or os.path.splitext(args.out)[0] + '_merge.png')
+    try:
+        merge_mask_files(args.masks, args.out, offsets=args.offsets, ramsz=args.ramsz, spec_log=args.spec_log,
+                         tomo_scans=args.tomo_scans, reference=args.reference, register=not args.no_register,
+                         register_slices=args.register_slices, max_shift=args.max_shift, figure=figure)
+    except (ValueError, FileNotFoundError) as exc:
+        logging.getLogger('hexrd').error(str(exc))
+        sys.exit(1)
     finally:
         cleanup()

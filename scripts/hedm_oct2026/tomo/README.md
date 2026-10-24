@@ -27,6 +27,7 @@ spec.log + dark/bright/tomo .h5  -->  per-layer reconstruction  -->  mask (70 la
 | `hexrd tomo spec <spec.log> [scan]` | Reads `spec.log`: scans, commands, columns (`ome`, `det_exp_out`, ...), comments. |
 | `hexrd tomo interpolate <mask> <out> <ranges>` | Fills bad layers by cubic interpolation of signed-distance maps. |
 | `hexrd tomo smooth <mask> <out> <sigma>` | Smooths a mask by filtering its signed-distance field in 3D. |
+| `hexrd tomo merge <masks> -o <out>` | Merges the masks of one sample scanned at several heights into one tall mask. |
 
 `hexrd tomo <step> -h` lists the options of a step. The code is in `hexrd/hedm/grainmap`:
 `tomo_pipeline.py`, `tomo_reconstruct.py` (and the library `tomoutil.py`: streaming loader, attenuation,
@@ -245,6 +246,12 @@ The `_interp` file adds `interpolated_layers` and `interpolation_support` (JSON:
 for each range). The `_smooth` file adds `mask_unsmoothed`, `sdf_smooth` and `smooth_sigma_voxels`.
 Always check `interpolated_layers`: those layers are not measurements.
 
+A merged file (see [Merging scans at several heights](#merging-scans-at-several-heights)) has `mask`, `Xs`, `Ys`, `Zs`
+and `voxel_spacing`, with `ramsz` the vertical stage position of its reference scan, when that is known, and adds
+`merge_offsets` (mm each source mask was shifted), `merge_shifts_voxels` (the registration of each, in voxels in the
+plane of the layers), `merge_spans_mm` (the first and last height of each source mask in the merged frame) and
+`merged_from` (JSON: the source files).
+
 ## Quality control and bad layers
 
 **Detector saturation is the main failure mode.** The Retiga is 12-bit, so counts clip at 4095. Where the
@@ -283,6 +290,56 @@ A binary mask on a grid keeps a staircase on diagonal edges. For a smooth surfac
 (e.g. `skimage.measure.marching_cubes(sdf_smooth, 0)`); it gives about 77,000 vertices for these masks.
 Watertightness of the meshes has not been checked.
 
+## Merging scans at several heights
+
+A sample taller than the field of view is scanned at several heights, with overlapping ranges, and each scan gives
+its own mask. `hexrd tomo merge` puts them into one mask:
+
+```bash
+hexrd tomo merge brass_L0_10um_tomo_mask.npz brass_L1_10um_tomo_mask.npz brass_L2_10um_tomo_mask.npz \
+    -o brass_all_10um_tomo_mask.npz --offsets -0.9 0 0.9
+```
+
+The masks are given in any order, and the offsets, ramsz and scan numbers below are in the same order.
+
+**How far each mask is shifted in height.** The heights `Ys` of a mask are measured from the beam center of its own scan,
+so each mask is shifted to the frame of one reference mask by `ramsz of the reference scan - ramsz of the scan`, the same
+convention as the vertical position above. The reference is the mask in the middle, or `--reference N`. The shifts come from,
+in order of preference:
+
+1. `--offsets`, the shift of each mask in mm, given directly;
+2. `--ramsz`, the vertical stage position of the tomography scan of each mask;
+3. the `ramsz` that each mask records, if all of them do;
+4. `--spec-log` with `--tomo-scans`, the spec scan number of each mask.
+
+What is given directly is used as it is, because the metadata in a mask is not always right, in particular in older masks,
+which do not record `ramsz` at all. If the masks record a `ramsz` that disagrees with `--offsets`, the merged mask does not
+record one (with a warning). Without a `ramsz` in the merged mask, the NF reconstruction cannot take its vertical position
+from the spec log, and needs `vertical_motor_position` in its config.
+
+**Registration.** The sample and the stages do not return to exactly the same place between scans, so each mask is moved in
+the plane of its layers to line up with its neighbor, working outwards from the reference. The shift is found from up to
+`--register-slices` slices (default 5) that the two masks have at the same height, as the median of the shifts of each by phase
+correlation, to a tenth of a voxel. It stops, naming the mask, if a shift is larger than `--max-shift` voxels (default 10), which
+usually means that the offsets are wrong, and warns if the slices disagree by more than a voxel. `--no-register` skips it.
+The masks have to reach each other in height, with or without registration.
+
+**The figure.** Unless `--no-figure` is given, it writes `<out>_merge.png` (or the file given as `--figure`): vertical
+cross sections through the middle of the sample along each direction, with the mask before the registration, after it, and
+where they differ (red where the mask was only there before, blue where it is only there after), the heights where
+masks overlap shaded, and the fraction of each layer that is sample, which steps at a join when the masks do not
+line up. The shifts are in its title. It is drawn when the masks are registered, as it shows what that changes.
+
+**The merged grid.** The masks are resampled onto one regular grid of heights, spaced like the voxels, that starts on the
+grid of the reference mask, so the reference layers that no other mask covers are kept as they are and the spacing is uniform
+even when an offset is not a whole number of layers. Where masks overlap, their signed-distance fields are blended, weighted
+by how far the height is from the end of each mask, so each counts most where it is furthest from its own ends and there
+is no step at a join. A mask is shifted by interpolation and cut back to a mask at half, so the shifts do not make it grow.
+
+On the brass scans (three masks, 10 um, offsets -0.9, 0, 0.9 mm), the two outer masks were moved by about 2 voxels, the
+slices agreed to 0.1 voxel, the mismatch between the masks in the overlaps fell from about 5% to about 2% of the sample,
+and the 280 layers are exactly one voxel apart.
+
 ## Using the steps individually
 
 ```bash
@@ -301,6 +358,10 @@ hexrd tomo reconstruct tomo_config.yml --spec-log spec.log --spec-scan 23 \
 
 hexrd tomo interpolate mask.npz out.npz 31-34 --support 29 30 35 36     # layers 31-34 from 29, 30, 35, 36
 hexrd tomo smooth in.npz out_smooth.npz 1.5
+
+# the masks of one sample scanned at several heights, as one mask (offsets from the masks' ramsz,
+# from --ramsz, or from the spec log with --spec-log and --tomo-scans)
+hexrd tomo merge low.npz mid.npz high.npz -o all_10um_tomo_mask.npz --offsets -0.9 0 0.9
 ```
 
 `hexrd tomo reconstruct` writes its log to `<output_directory>/<analysis_name>_tomo.log` and, unlike the old
