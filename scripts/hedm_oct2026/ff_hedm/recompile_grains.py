@@ -27,160 +27,112 @@
 ###############################################################################
 """Recompile the FF grains of a state and set up the next one
 
-Run this after hexrd has fit the grains of every layer of state load_num, i.e.
-after <analysis_stem>S<load_num>_L<layer>/grains.out exist.  It puts the layers
-back together into one grains list, then writes the files for state
-load_num + 1 in the same form as stitch_grains.py, which is only
-run for the first state:
+Run this for every state after the first, once hexrd has fit the grains of every layer of the state,
+that is, once <analysis_stem>S<state>_L<layer>/grains.out exist in the output directory.  It puts the
+layers back together into one grains list, then writes the files for the next state in the same form
+as stitch_grains.py, which is only run for the first state:
 
-    <stem>S<load_num>_master.out        compiled grains
-    grain_nums_S<load_num>_L<layer>.txt  which grains are in each layer
-    S<load_num+1>_seed_L<layer>_grains.out  starting grains of each layer
-    <stem>S<load_num+1>.yml             hexrd config for the next state (optional)
+    <stem>S<state>_master.out            the compiled grains
+    grain_nums_S<state>_L<layer>.txt     which grains are in each layer
+    S<state+1>_seed_L<layer>_grains.out  the starting grains of each layer
 
-The settings that describe the experiment (sample, layers, offsets, beam height,
-detector file, image names) have to match the ones in stitch_grains.py.
+The hexrd config of the next state is made by build_pipeline.py.
+
+    python recompile_grains.py ff_pipeline.yml --state 3
+
+Authors: dcp5303, lim37
 """
-
-# %% Import Modules
+import argparse
 import os
 
 import numpy as np
 
+from ff_config import load_config
 from ff_grains_io import (
-    beam_calibration_file_name, correct_energy_gradient,
-    grain_nums_file_name, grains_file_path, load_beam_calibration, make_grain_lists,
-    master_file_name, read_detector_panels, write_grains_files, write_yaml,
+    correct_energy_gradient, grain_nums_file_name, grains_file_path,
+    load_beam_calibration, make_grain_lists, master_file_name, write_grains_files,
 )
 
 
-# %% User Input
-###############################################################################
+def recompile(cfg, state):
+    """Compile the master grains of a state from the fits of its layers, and seed the next state
 
-samp = 'diamond-1a'
-analysis_stem = "%s_" % samp
+    cfg is from ff_config.load_config.  Returns the master grains.
+    """
+    if state < 1:
+        raise ValueError('The first state (0) is put together by stitch_grains.py, not recompiled')
+    r = cfg.recompile
+    output_dir = cfg.output_dir
+    os.makedirs(output_dir, exist_ok=True)
 
-# State that hexrd has just fit; the grains it started from are in state load_num - 1
-load_num = 1
-num_layers = 4
-# Where the seed grains of each layer are taken from, and how far beyond the illuminated
-# volume, as in the stitching script (see there for what the options are)
-location = 'both'
-seed_margin = 0.5
+    # The compiled grains of the last state, which seeded the layers that were just fit
+    master_grain_data = np.loadtxt(os.path.join(output_dir, master_file_name(cfg.analysis_stem, state - 1)))
+    num_grains = master_grain_data.shape[0]
 
-# Directory with the master and grain_nums files and the hexrd analysis directories
-output_dir_base = './'
+    beam_calibration = None
+    beam_center_y = 0.0
+    if cfg.beam_calibration_file is not None:
+        beam_calibration = load_beam_calibration(cfg.beam_calibration_file)
+        beam_center_y = beam_calibration['beam_center_y']
 
-data_dir = "/Users/lim37/Library/CloudStorage/OneDrive-LLNL/TriMet - General/CHESS_2026-09"
-# hexrd instrument file; its detector keys and their panels are used for the yaml image series
-detector_file = data_dir + '/dexela_ruby_composite.hexrd'
+    # The fit of each layer, in the frame of the sample, in the rows of the master list
+    grain_holder = np.zeros([cfg.num_layers, num_grains, master_grain_data.shape[1]])
 
-# Energy gradient of the beam, to correct the strains for, and the height of the center of the
-# beam, which calc_lparm.py finds (None for no correction and a beam center at 0)
-beam_calibration_file = output_dir_base + beam_calibration_file_name(analysis_stem)
+    for i in range(cfg.num_layers):
+        scan_grain_data = np.loadtxt(grains_file_path(output_dir, cfg.analysis_stem, state, i))
+        grain_num_list = np.loadtxt(os.path.join(
+            output_dir, grain_nums_file_name(state - 1, i))).astype(int)
 
-# Reassembly
-close_completness_cutoff = 0.1  # 10% is probably reasonable
-high_chi2_thresh = 5e-2
+        print('Layer %d: %d grains fit, %d with completeness above 0.9'
+              % (i, len(scan_grain_data), np.sum(scan_grain_data[:, 1] > 0.9)))
 
-# Seeding the next state
-low_comp_thresh = 0.6
+        # the y of the grains is still in the frame of the layer here, as the gradient is
+        if beam_calibration is not None:
+            scan_grain_data = correct_energy_gradient(scan_grain_data, beam_calibration)
 
-# Vertical (ramsz) motor position of each layer, Y offset is -ramsz, as in the stitching script
-ramsz = np.array([-0.525, -0.125, 0.125, 0.525])
-pos_offset = np.zeros([3, len(ramsz)])
-pos_offset[1, :] = -ramsz
+        scan_grain_data[:, 6:9] = scan_grain_data[:, 6:9] + cfg.pos_offset[:, i]
 
-beam_height = 0.35
+        grain_holder[i, grain_num_list, :] = scan_grain_data
 
-# Optional FF config yaml for the next state, built from initial_yaml and image_fstem
-write_next_yaml = False
+    # Compile one row for each grain from its layers
+    grain_data = np.zeros([num_grains, 21])
+    for kk in range(num_grains):
+        max_comp = np.max(grain_holder[:, kk, 1])
+        # layers whose completeness is close to the best one
+        close_vals = np.where(
+            np.abs(grain_holder[:, kk, 1] - max_comp) < r.close_completeness_cutoff)[0]
+        chi2_vals = grain_holder[:, kk, 2]
+        good_grains = np.where(chi2_vals < r.high_chi2_thresh)[0]
+        test = np.intersect1d(close_vals, good_grains)
 
-initial_yaml = 'diamond-1a_S0.yml'
-# image files per scan, filled with (sample, scan number, detector name, file number)
-image_fstem = '../../preprocess_dexelas/diamond-1a/%s_%d_%s_%06d-cachefile.npz'
-# of the first layer of the next state
-first_scan_num = 88
-first_file_num = 403
+        if len(good_grains) <= 1:
+            best_grain = np.argmin(chi2_vals)
+            grain_data[kk, 1:] = grain_holder[best_grain, kk, 1:]
+        else:
+            grain_data[kk, 1:] = np.mean(grain_holder[test, kk, 1:], 0)
 
+    grain_data[:, 0] = np.arange(num_grains)
 
-# %% Layer grains to the master list
-###############################################################################
+    print('%d grains in %d layers, %d with completeness above 0.9, %d grains disappeared'
+          % (num_grains, cfg.num_layers, np.sum(grain_data[:, 1] > 0.9), np.sum(grain_data[:, 1] == 0)))
 
-output_dir = output_dir_base
-os.makedirs(output_dir, exist_ok=True)
-
-# The compiled grains of the last state, which seeded the layers that were just fit
-master_grain_data = np.loadtxt(os.path.join(
-    output_dir, master_file_name(analysis_stem, load_num - 1)))
-num_grains = master_grain_data.shape[0]
-
-beam_calibration = None
-beam_center_y = 0.0
-if beam_calibration_file is not None:
-    beam_calibration = load_beam_calibration(beam_calibration_file)
-    beam_center_y = beam_calibration['beam_center_y']
-
-# The fit of each layer, in the frame of the sample, in the rows of the master list
-grain_holder = np.zeros([num_layers, num_grains, master_grain_data.shape[1]])
-
-for i in np.arange(num_layers):
-    scan_grain_data = np.loadtxt(grains_file_path(output_dir, analysis_stem, load_num, i))
-    grain_num_list = np.loadtxt(os.path.join(
-        output_dir, grain_nums_file_name(load_num - 1, i))).astype(int)
-
-    print('Layer %d: %d grains fit, %d with completeness above 0.9'
-          % (i, len(scan_grain_data), np.sum(scan_grain_data[:, 1] > 0.9)))
-
-    # the y of the grains is still in the frame of the layer here, as the gradient is
-    if beam_calibration is not None:
-        scan_grain_data = correct_energy_gradient(scan_grain_data, beam_calibration)
-
-    scan_grain_data[:, 6:9] = scan_grain_data[:, 6:9] + pos_offset[:, i]
-
-    grain_holder[i, grain_num_list, :] = scan_grain_data
+    # The master list and the files for the next state
+    write_grains_files(output_dir, cfg.analysis_stem, grain_data, state, location=cfg.location)
+    make_grain_lists(cfg.analysis_stem, grain_data, state, cfg.beam_height, cfg.pos_offset, output_dir,
+                     location=cfg.location, low_comp_thresh=r.low_comp_thresh,
+                     high_chi2_thresh=r.high_chi2_thresh, beam_center_y=beam_center_y,
+                     seed_margin=cfg.seed_margin)
+    return grain_data
 
 
-# %% Compile the master list
-###############################################################################
-
-grain_data = np.zeros([num_grains, 21])
-n_good = 0
-
-for kk in np.arange(num_grains):
-
-    max_comp = np.max(grain_holder[:, kk, 1])
-    # layers whose completeness is close to the best one
-    close_vals = np.where(
-        np.abs(grain_holder[:, kk, 1] - max_comp) < close_completness_cutoff)[0]
-    chi2_vals = grain_holder[:, kk, 2]
-    good_grains = np.where(chi2_vals < high_chi2_thresh)[0]
-    test = np.intersect1d(close_vals, good_grains)
-
-    if len(good_grains) <= 1:
-        best_grain = np.argmin(chi2_vals)
-        grain_data[kk, 1:] = grain_holder[best_grain, kk, 1:]
-        n_good += 1
-    else:
-        grain_data[kk, 1:] = np.mean(grain_holder[test, kk, 1:], 0)
-
-grain_data[:, 0] = np.arange(num_grains)
-
-print('%d grains in %d layers, %d with completeness above 0.9, %d grains disappeared'
-      % (num_grains, num_layers, np.sum(grain_data[:, 1] > 0.9), np.sum(grain_data[:, 1] == 0)))
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
+    parser.add_argument('config', help='the pipeline config yaml')
+    parser.add_argument('--state', type=int, required=True,
+                        help='the state that hexrd has just fit, 1 or later')
+    args = parser.parse_args(argv)
+    recompile(load_config(args.config), args.state)
 
 
-# %% Write the master list and the files for the next state
-###############################################################################
-
-write_grains_files(output_dir, analysis_stem, grain_data, load_num, location=location)
-
-make_grain_lists(analysis_stem, grain_data, load_num, beam_height, pos_offset, output_dir,
-                 location=location, low_comp_thresh=low_comp_thresh,
-                 high_chi2_thresh=high_chi2_thresh, beam_center_y=beam_center_y,
-                 seed_margin=seed_margin)
-
-if write_next_yaml:
-    write_yaml(initial_yaml, image_fstem, samp, analysis_stem, load_num + 1,
-               num_layers, first_scan_num, first_file_num, output_dir,
-               det_panels=read_detector_panels(detector_file), location=location)
+if __name__ == '__main__':
+    main()

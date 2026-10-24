@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""Put the layers of the first FF state together into one list of grains
+
+Run this once, on the first state, after calc_lparm.py.  For each layer it reads the grains.out that
+hexrd wrote, takes out the energy gradient of the beam, keeps the good grains, moves the layers to their
+heights in the sample and merges the grains that are seen in more than one layer.  It writes the master
+grains of the state and the seed files and grain number lists of each layer for the next state, which
+hexrd starts from.  The hexrd config of the next state is made by build_pipeline.py.
+
+    python stitch_grains.py ff_pipeline.yml [--state 0]
+
+Authors: dcp5303, lim37
 """
-Created on Tue Apr 26 16:16:10 2022
-
-@author: rachellim
-
-Now with options to decide which grains to look for
-"""
-
-
-# %% #Import Modules
+import argparse
 import copy
+import os
 
 import numpy as np
 
@@ -20,98 +24,11 @@ from hexrd.core.rotations import quatProduct
 from hexrd import material
 from hexrd import valunits
 
+from ff_config import load_config
 from ff_grains_io import (
-    beam_calibration_file_name, correct_energy_gradient, load_beam_calibration,
-    grains_file_path, make_grain_lists, read_beam_energy, read_detector_panels,
-    write_grains_files, write_yaml,
+    correct_energy_gradient, grains_file_path, load_beam_calibration,
+    make_grain_lists, read_beam_energy, write_grains_files,
 )
-
-
-# %% User Input
-###############################################################################
-
-samp = 'diamond-1a'
-analysis_stem = "%s_" % samp
-
-# hexrd material file in h5 format
-data_dir = "/Users/lim37/Library/CloudStorage/OneDrive-LLNL/TriMet - General/CHESS_2026-09"
-mat_file_loc = data_dir + "/materials_316L.h5"
-mat_name = "316L"
-# the beam energy comes from detector_file and dmin from the materials file
-
-
-num_layers = 4
-# hexrd instrument file; its detector keys and their panels are used for the yaml image series
-detector_file = data_dir + '/dexela_ruby_composite.hexrd'
-
-load_num = 0
-
-
-# Where the seed grains of each layer are taken from: the volume that the beam illuminates (the
-# beam height around the beam center) and a margin beyond it, which takes in grains from just
-# outside that could move into it.  y is up in the lab frame.
-#   'both'  - the margin is above and below the illuminated volume
-#   'above' - the margin is only above it, toward higher y
-#   'below' - the margin is only below it, toward lower y
-# (The old names were 'top' for 'above' and 'bottom' for 'below', with the note that it is
-# generally below for tension and above for compression.)
-location = 'both'
-# Size of that margin, as a fraction of the beam height
-seed_margin = 0.5
-
-# The FF directory, with a directory of the hexrd analysis of each layer in it,
-# <analysis_stem>S<load_num>_L<layer>/grains.out
-ff_dir = data_dir + '/%s/FF' % samp
-
-# Optional outputs for the next state
-# Per-layer seed grains.out files (S<next>_seed_L<layer>_grains.out) and the grain_nums_S*_L*.txt lists
-make_layer_grain_lists = True
-# FF config yaml for the next state, built from initial_yaml and image_fstem
-write_next_yaml = False
-
-initial_yaml = 'diamond-1a_S0.yml'
-# image files per scan, filled with (sample, scan number, detector name, file number)
-image_fstem = '../../preprocess_dexelas/diamond-1a/%s_%d_%s_%06d-cachefile.npz'
-first_scan_num = 88
-first_file_num = 403
-output_dir_base = './'
-
-
-# Position and Misorientation differences to merge grains
-dist = 0.1  # mm
-misorientation = 0.25  # degrees
-completeness_diff = 0.1  # if two grains are matched, the completenesses are checked,
-# if the differences in completion are within completeness_diff, the grain values are averaged,
-# if not, the data from the grain with higher completion is kept and the other data is discarded
-
-# Offsets, these can be input as arguments
-# Each dataset can have positional or rotation offsets
-# Position offsets are in mm, 3 x n matrix where n is the number of grains.out files being stitched
-# Rotation offsets exponential maps
-
-
-# Vertical (ramsz) motor position of each layer. Layers lower in the sample have a higher ramsz
-# (the motor sits below the sample), so the Y offset applied to each grains.out is -ramsz
-ramsz = np.array([-0.525, -0.125, 0.125, 0.525])
-pos_offset = np.zeros([3, len(ramsz)])
-pos_offset[1, :] = -ramsz
-
-beam_height = 0.35
-
-rot_offset = None
-
-low_comp_thresh = 0.5
-high_chi2_thresh = 0.05
-
-# Energy gradient of the beam, to correct the strains for, and the height of the center of the
-# beam, which calc_lparm.py finds (None for no correction and a beam center at 0)
-beam_calibration_file = output_dir_base + beam_calibration_file_name(analysis_stem)
-
-# vertical pos correction
-
-v_pos_corr = 0.0
-
-# %%
 
 
 def closest_symmetric_variant(q1, q2, qsyms):
@@ -236,68 +153,51 @@ def load_pdata(filename, energy, mat):
     return pd
 
 
-# % Load data
-x_ray_e = read_beam_energy(detector_file)
-pd = load_pdata(mat_file_loc, x_ray_e, mat_name)
-qsyms = pd.q_sym
+def stitch(cfg, state=0):
+    """Make the master grains and the seed files of the layers of a state, from the config
 
-# %%
+    cfg is from ff_config.load_config.  Returns the master grains, with the duplicates merged.
+    """
+    s = cfg.stitch
+    qsyms = load_pdata(cfg.materials_file, read_beam_energy(cfg.detector_file), cfg.material_name).q_sym
 
+    beam_calibration = None
+    beam_center_y = 0.0
+    if cfg.beam_calibration_file is not None:
+        beam_calibration = load_beam_calibration(cfg.beam_calibration_file)
+        beam_center_y = beam_calibration['beam_center_y']
 
-# for ll in np.arange(num_states):
+    grain_data_list = []
+    for i in range(cfg.num_layers):
+        data = np.loadtxt(grains_file_path(cfg.ff_dir, cfg.analysis_stem, state, i))
+        # the y of the grains is still in the frame of the layer here, as the gradient is
+        if beam_calibration is not None:
+            data = correct_energy_gradient(data, beam_calibration)
+        good = np.logical_and(data[:, 1] >= s.low_comp_thresh, data[:, 2] <= s.high_chi2_thresh)
+        print('Layer %d has %d good grains' % (i, good.sum()))
+        grain_data_list.append(data[good, :])
 
+    combined_grain_data = assemble_grain_data(grain_data_list, cfg.pos_offset, None)
+    culled_grain_data, dup_list = remove_duplicate_grains(
+        combined_grain_data, qsyms, s.dist, s.misorientation, s.completeness_diff
+    )
 
-output_dir = output_dir_base
-
-num_grain_files = num_layers
-
-grain_data_list = [None] * num_grain_files
-
-beam_calibration = None
-beam_center_y = 0.0
-if beam_calibration_file is not None:
-    beam_calibration = load_beam_calibration(beam_calibration_file)
-    beam_center_y = beam_calibration['beam_center_y']
-
-for i in np.arange(num_grain_files):
-    grain_data_list[i] = np.loadtxt(grains_file_path(ff_dir, analysis_stem, load_num, i))
-
-    # the y of the grains is still in the frame of the layer here, as the gradient is
-    if beam_calibration is not None:
-        grain_data_list[i] = correct_energy_gradient(grain_data_list[i], beam_calibration)
-
-    good_comp = np.where(grain_data_list[i][:, 1] >= low_comp_thresh)[0]
-    good_chi2 = np.where(grain_data_list[i][:, 2] <= high_chi2_thresh)[0]
-
-    to_keep = np.intersect1d(good_comp, good_chi2)
-
-    print('Layer %d has %d good grains' % (i, len(to_keep)))
-
-    grain_data_list[i] = grain_data_list[i][to_keep, :]
-
-combined_grain_data = assemble_grain_data(
-    grain_data_list, pos_offset, rot_offset
-)
-
-culled_grain_data, dup_list = remove_duplicate_grains(
-    combined_grain_data, qsyms, dist, misorientation, completeness_diff
-)
+    os.makedirs(cfg.output_dir, exist_ok=True)
+    write_grains_files(cfg.output_dir, cfg.analysis_stem, culled_grain_data, state, location=cfg.location)
+    if s.make_layer_grain_lists:
+        make_grain_lists(cfg.analysis_stem, culled_grain_data, state, cfg.beam_height, cfg.pos_offset,
+                         cfg.output_dir, location=cfg.location, v_pos_corr=s.v_pos_corr,
+                         beam_center_y=beam_center_y, seed_margin=cfg.seed_margin)
+    return culled_grain_data
 
 
-# %%
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
+    parser.add_argument('config', help='the pipeline config yaml')
+    parser.add_argument('--state', type=int, default=0, help='the state to put together, 0 for the first')
+    args = parser.parse_args(argv)
+    stitch(load_config(args.config), args.state)
 
-write_grains_files(output_dir, analysis_stem,
-                   culled_grain_data, load_num, location=location)
 
-if make_layer_grain_lists:
-    make_grain_lists(analysis_stem, culled_grain_data, load_num,
-                     beam_height, pos_offset, output_dir, location=location,
-                     v_pos_corr=v_pos_corr, beam_center_y=beam_center_y,
-                     seed_margin=seed_margin)
-
-if write_next_yaml:
-    write_yaml(initial_yaml, image_fstem, samp, analysis_stem, load_num + 1,
-               num_layers, first_scan_num, first_file_num, output_dir,
-               det_panels=read_detector_panels(detector_file), location=location)
-
-# %%
+if __name__ == '__main__':
+    main()

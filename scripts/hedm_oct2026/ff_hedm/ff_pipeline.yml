@@ -1,0 +1,71 @@
+# Settings of the FF pipeline, read by calc_lparm.py, stitch_grains.py, recompile_grains.py and
+# build_pipeline.py.  Relative paths are relative to the directory this file is in.  Settings that are
+# not here have the values that are shown commented out below.  See README.md for what they all do.
+
+sample: diamond-1a
+# analysis_stem: diamond-1a_        # the start of every file and analysis name, <sample>_ if left out
+
+# The directory that has the hexrd analysis of each layer of the first state, <stem>S0_L<layer>/grains.out
+ff_dir: /Users/lim37/Library/CloudStorage/OneDrive-LLNL/TriMet - General/CHESS_2026-09/diamond-1a/FF
+# Where everything that is made goes, and where hexrd runs for the later states (the config's directory if left out)
+output_dir: ./diamond-1a_pipeline
+
+# hexrd instrument file: the beam energy for the material, and the detectors and their panels for the yaml
+detector_file: /Users/lim37/Library/CloudStorage/OneDrive-LLNL/TriMet - General/CHESS_2026-09/dexela_ruby_composite.hexrd
+
+materials:
+  file: /Users/lim37/Library/CloudStorage/OneDrive-LLNL/TriMet - General/CHESS_2026-09/materials_316L.h5
+  name: 316L
+
+layers:
+  # The vertical motor (ramsz) position of each layer, in the order of the layers.  The motor is below the
+  # sample, so a layer at a higher ramsz is lower in the sample, and its offset in y is -ramsz.
+  ramsz: [-0.525, -0.125, 0.125, 0.525]
+  beam_height: 0.35               # mm
+
+seeds:
+  # Where the seed grains of a layer come from: the volume that the beam illuminates and a margin
+  # beyond it.  'both' has the margin above and below it, 'above' only above (toward higher y),
+  # and 'below' only below (toward lower y).
+  location: both
+  margin: 0.5                     # as a fraction of the beam height
+
+hexrd:
+  # The config of the first state, which the configs of the later states are made from, and the names of
+  # the images, filled with (sample, scan number, detector, file number)
+  initial_yaml: diamond-1a_S0.yml
+  image_fstem: ../../preprocess_dexelas/diamond-1a/%s_%d_%s_%06d-cachefile.npz
+  # command: hexrd fit-grains      # the command, and the arguments to add to it, for example -f to
+  # args: ''                       # overwrite an analysis that is already there
+
+# The later states, numbered from 1.  Each is the scan and file number of its first layer, and its layers
+# follow in order.  THESE ARE EXAMPLES, set them for your scans.
+states:
+  1: {first_scan: 92, first_file: 407}
+  2: {first_scan: 96, first_file: 411}
+
+# stitch:                           # stitch_grains.py, for the first state
+#   low_comp_thresh: 0.5            # grains need at least this completeness ...
+#   high_chi2_thresh: 0.05          # ... and at most this chi2
+#   dist: 0.1                       # grains this close (mm) and ...
+#   misorientation: 0.25            # ... this close in orientation (degrees) are the same grain
+#   completeness_diff: 0.1          # their completenesses are averaged if within this, else the better one is kept
+#   v_pos_corr: 0.0
+#   make_layer_grain_lists: true    # write the seed files and grain lists for the next state
+
+# recompile:                        # recompile_grains.py, for the later states
+#   close_completeness_cutoff: 0.1  # layers within this of a grain's best completeness are averaged
+#   high_chi2_thresh: 0.05          # and need a chi2 below this
+#   low_comp_thresh: 0.6            # seed grains of the next state need at least this completeness
+
+# calibration:                      # calc_lparm.py
+#   apply: true                     # false to run without the energy gradient or a beam center
+#   good_comp_min: 0.85             # grains used for the fit need at least this completeness
+#   good_chi2_max: 0.01             # and at most this chi2
+#   model: spline                   # spline for a multilayer, polynomial with poly_degree: 1 for a linear mono
+#   n_knots: 4                      # interior knots of the spline
+#   poly_degree: 1
+#   outlier_sigma: 4                # grains this many standard deviations from the fit are left out
+#   min_grains_per_bin: 10          # the fit covers the heights where every bin has this many good grains
+#   trim_bin_width: 0.025           # mm
+#   density_bin_width: 0.01         # mm, of the grain density figure
