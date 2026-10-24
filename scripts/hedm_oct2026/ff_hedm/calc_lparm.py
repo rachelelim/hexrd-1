@@ -24,7 +24,7 @@ from matplotlib import pyplot as plt
 
 from ff_grains_io import (
     beam_calibration_file_name, energy_gradient_strain, fit_energy_gradient,
-    save_beam_calibration, well_populated_range,
+    read_lattice_parameter, save_beam_calibration, well_populated_range,
 )
 
 
@@ -63,8 +63,10 @@ poly_degree = 1
 # grains this many standard deviations from the fit are left out of it
 outlier_sigma = 4
 
-# Lattice parameter of the unstrained material (angstrom), to report the mean one
-L0 = 3.5916
+# hexrd materials file and the name of the material, for its lattice parameter, which the
+# mean strain is reported against
+mat_file_loc = data_dir + "/materials_316L.h5"
+mat_name = "316L"
 
 output_dir = './'
 
@@ -110,8 +112,9 @@ used[in_range] = gradient['used']
 print('%s fit to %d of %d grains, rms %.2e, y from %.3f to %.3f'
       % (gradient_model, gradient['n_grains'], len(y_all),
          gradient['rms_residual'], gradient['y_min'], gradient['y_max']))
-print('Mean normal strain %.4e, lattice parameter %.5f' %
-      (gradient['mean_strain'], L0 * (1 + gradient['mean_strain'])))
+L0 = read_lattice_parameter(mat_file_loc, mat_name)
+print('Mean normal strain %.4e, lattice parameter %.5f (%.5f in the materials file)' %
+      (gradient['mean_strain'], L0 * (1 + gradient['mean_strain']), L0))
 
 # The beam is as high as the range of heights with enough grains, and its center is the middle of it
 beam_center_y = 0.5 * (y_lo + y_hi)

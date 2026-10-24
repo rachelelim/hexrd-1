@@ -208,6 +208,12 @@ def read_detector_panels(instrument_file):
     return det_panels
 
 
+def read_lattice_parameter(materials_file, material_name):
+    """Lattice parameter a of a material in a hexrd materials file, in angstrom"""
+    with h5py.File(materials_file, 'r') as f:
+        return 10.0 * float(f[material_name]['LatticeParameters'][0])  # the file has nm
+
+
 def read_beam_energy(instrument_file):
     """Beam energy in keV from a hexrd instrument file"""
     with h5py.File(instrument_file, 'r') as f:

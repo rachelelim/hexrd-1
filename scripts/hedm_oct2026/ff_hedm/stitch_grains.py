@@ -10,21 +10,15 @@ Now with options to decide which grains to look for
 
 
 # %% #Import Modules
-import os
-import numpy as np
 import copy
-import glob
+
+import numpy as np
 
 import hexrd.matrixutil as mutil
 import hexrd.rotations as rot
-import hexrd.symmetry as sym
 from hexrd.core.rotations import quatProduct
-from hexrd import instrument
-from hexrd.cli.fit_grains import write_results
 from hexrd import material
 from hexrd import valunits
-
-import shutil
 
 from ff_grains_io import (
     beam_calibration_file_name, correct_energy_gradient, load_beam_calibration,
@@ -65,10 +59,7 @@ location = 'both'
 # Size of that margin, as a fraction of the beam height
 seed_margin = 0.5
 
-# 'diamond-1a/FF/%s_S%%d_L%%d/grains_crop.out' % samp
 grain_file_stem = data_dir + '/%s/FF/%s_S%%d_L%%d_grains.out' % (samp, samp)
-
-# grain_file_stem = '%s_S%%d_L%%d/grains.out' %(samp)
 
 # Optional outputs for the next state
 # Per-layer seed grains.out files (S<next>_seed_L<layer>_grains.out) and the grain_nums_S*_L*.txt lists
@@ -81,8 +72,7 @@ initial_yaml = 'diamond-1a_S0.yml'
 image_fstem = '../../preprocess_dexelas/diamond-1a/%s_%d_%s_%06d-cachefile.npz'
 first_scan_num = 88
 first_file_num = 403
-# output_dir_base = "/nfs/chess/user/relim/voisin-3061-c/s26-2"
-output_dir_base = './'  # %samp
+output_dir_base = './'
 
 
 # Position and Misorientation differences to merge grains
@@ -228,9 +218,8 @@ def assemble_grain_data(grain_data_list, pos_offset=None, rotation_offset=None):
             :,
         ] = tmp
 
-    old_grain_numbers = copy.copy(grain_data[:, 0])
     grain_data[:, 0] = np.arange(num_grains)
-    return grain_data, old_grain_numbers
+    return grain_data
 
 
 def load_pdata(filename, energy, mat):
@@ -288,19 +277,13 @@ for i in np.arange(num_grain_files):
 
     grain_data_list[i] = grain_data_list[i][to_keep, :]
 
-combined_grain_data, old_grain_numbers = assemble_grain_data(
+combined_grain_data = assemble_grain_data(
     grain_data_list, pos_offset, rot_offset
 )
-
-#   STUPID POINTERS VS COPYING OF VARIABLES WHY - REL 2022-04-28
-combo_gdata = copy.deepcopy(combined_grain_data)
 
 culled_grain_data, dup_list = remove_duplicate_grains(
     combined_grain_data, qsyms, dist, misorientation, completeness_diff
 )
-
-
-new_grain_numbers = np.delete(old_grain_numbers, dup_list.astype(int))
 
 
 # %%
