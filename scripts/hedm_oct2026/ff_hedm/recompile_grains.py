@@ -48,8 +48,8 @@ import os
 import numpy as np
 
 from ff_grains_io import (
-    analysis_name, beam_calibration_file_name, correct_energy_gradient,
-    grain_nums_file_name, load_beam_calibration, make_grain_lists,
+    beam_calibration_file_name, correct_energy_gradient,
+    grain_nums_file_name, grains_file_path, load_beam_calibration, make_grain_lists,
     master_file_name, read_detector_panels, write_grains_files, write_yaml,
 )
 
@@ -125,8 +125,7 @@ if beam_calibration_file is not None:
 grain_holder = np.zeros([num_layers, num_grains, master_grain_data.shape[1]])
 
 for i in np.arange(num_layers):
-    scan_grain_data = np.loadtxt(os.path.join(
-        output_dir, analysis_name(analysis_stem, load_num, i), 'grains.out'))
+    scan_grain_data = np.loadtxt(grains_file_path(output_dir, analysis_stem, load_num, i))
     grain_num_list = np.loadtxt(os.path.join(
         output_dir, grain_nums_file_name(load_num - 1, i))).astype(int)
 

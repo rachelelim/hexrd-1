@@ -24,7 +24,7 @@ from matplotlib import pyplot as plt
 
 from ff_grains_io import (
     beam_calibration_file_name, energy_gradient_strain, fit_energy_gradient,
-    read_lattice_parameter, save_beam_calibration, well_populated_range,
+    grains_file_path, read_lattice_parameter, save_beam_calibration, well_populated_range,
 )
 
 
@@ -35,8 +35,9 @@ samp = 'diamond-1a'
 analysis_stem = "%s_" % samp
 
 data_dir = "/Users/lim37/Library/CloudStorage/OneDrive-LLNL/TriMet - General/CHESS_2026-09"
-# the grains.out of each layer of the first state, with every grain that hexrd found
-grain_file_stem = data_dir + '/%s/FF/%s_S%%d_L%%d_grains_full.out' % (samp, samp)
+# The FF directory, with a directory of the hexrd analysis of each layer of the first state in it,
+# <analysis_stem>S<state>_L<layer>/grains.out, the same files stitch_grains.py reads
+ff_dir = data_dir + '/%s/FF' % samp
 state_num = 0
 num_layers = 4
 
@@ -79,7 +80,7 @@ strain_all = []
 layer_all = []
 every_grain = []  # y, completeness, good, layer of every grain, for the density figure
 for i in range(num_layers):
-    data = np.loadtxt(grain_file_stem % (state_num, i))
+    data = np.loadtxt(grains_file_path(ff_dir, analysis_stem, state_num, i))
     good = np.logical_and(data[:, 2] < good_chi2_max, data[:, 1] > good_comp_min)
     print('Layer %d: %d of %d grains are good' % (i, good.sum(), len(data)))
     every_grain.append(np.column_stack([data[:, 7], data[:, 1], good, np.full(len(data), i)]))
@@ -241,13 +242,13 @@ for i in range(num_layers):
 counts, _ = np.histogram(yg, edges)
 a.step(centers, counts / density_bin_width, where='mid', color='k', lw=2, label='all layers')
 a.set_ylabel('grains per mm')
-a.set_title('Every grain found (dashed: beam center %.3f mm)' % beam_center_y)
+a.set_title('Grains in the files (dashed: beam center %.3f mm)' % beam_center_y)
 a.legend(fontsize=8)
 
 a = ax[1]
 counts_all, _ = np.histogram(yg, edges)
 counts_good, _ = np.histogram(yg[good_g], edges)
-a.step(centers, counts_all / density_bin_width, where='mid', color='0.6', label='every grain')
+a.step(centers, counts_all / density_bin_width, where='mid', color='0.6', label='all grains in the files')
 a.step(centers, counts_good / density_bin_width, where='mid', color='k',
        label='good grains (completeness > %g, chi2 < %g)' % (good_comp_min, good_chi2_max))
 a.set_ylabel('grains per mm, all layers')

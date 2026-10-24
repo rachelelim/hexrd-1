@@ -35,6 +35,9 @@ class TestFileNames(unittest.TestCase):
         self.assertEqual(io.analysis_name('s_', 3, 1), 's_S3_L1')
         self.assertEqual(io.grain_nums_file_name(2, 0), 'grain_nums_S2_L0.txt')
         self.assertEqual(io.yaml_file_name('s_', 4), 's_S4.yml')
+        # the grains.out of hexrd is in the directory of the analysis of its layer
+        self.assertEqual(io.grains_file_path('/data/s/FF', 's_', 0, 2),
+                         os.path.join('/data/s/FF', 's_S0_L2', 'grains.out'))
         self.assertEqual(io.beam_calibration_file_name('s_'), 's_beam_calibration.yml')
 
     def test_seed_names_by_location(self):

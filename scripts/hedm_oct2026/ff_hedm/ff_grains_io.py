@@ -38,6 +38,11 @@ def analysis_name(analysis_stem, state_num, layer_num):
     return '%sS%d_L%d' % (analysis_stem, state_num, layer_num)
 
 
+def grains_file_path(ff_dir, analysis_stem, state_num, layer_num):
+    """grains.out that hexrd wrote for a layer, in the directory of its analysis in ff_dir"""
+    return os.path.join(ff_dir, analysis_name(analysis_stem, state_num, layer_num), 'grains.out')
+
+
 def master_file_name(analysis_stem, state_num):
     return '%sS%03d_master.out' % (analysis_stem, state_num)
 

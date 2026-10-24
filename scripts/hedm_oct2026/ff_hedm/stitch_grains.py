@@ -22,7 +22,7 @@ from hexrd import valunits
 
 from ff_grains_io import (
     beam_calibration_file_name, correct_energy_gradient, load_beam_calibration,
-    make_grain_lists, read_beam_energy, read_detector_panels,
+    grains_file_path, make_grain_lists, read_beam_energy, read_detector_panels,
     write_grains_files, write_yaml,
 )
 
@@ -59,7 +59,9 @@ location = 'both'
 # Size of that margin, as a fraction of the beam height
 seed_margin = 0.5
 
-grain_file_stem = data_dir + '/%s/FF/%s_S%%d_L%%d_grains.out' % (samp, samp)
+# The FF directory, with a directory of the hexrd analysis of each layer in it,
+# <analysis_stem>S<load_num>_L<layer>/grains.out
+ff_dir = data_dir + '/%s/FF' % samp
 
 # Optional outputs for the next state
 # Per-layer seed grains.out files (S<next>_seed_L<layer>_grains.out) and the grain_nums_S*_L*.txt lists
@@ -258,11 +260,7 @@ if beam_calibration_file is not None:
     beam_center_y = beam_calibration['beam_center_y']
 
 for i in np.arange(num_grain_files):
-    # analysis_name = analysis_stem + "_S%d_L%d" % (load_num, i+1)
-    grain_file = grain_file_stem % (load_num, i)
-
-    # grain_data_list[i]=np.loadtxt(os.path.join(grain_file_locs[i] %(load_num),'grains.out'))
-    grain_data_list[i] = np.loadtxt(grain_file)
+    grain_data_list[i] = np.loadtxt(grains_file_path(ff_dir, analysis_stem, load_num, i))
 
     # the y of the grains is still in the frame of the layer here, as the gradient is
     if beam_calibration is not None:
